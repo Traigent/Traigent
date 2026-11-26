@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import decimal
+import hashlib
 import os
 import stat
 from decimal import Decimal
@@ -294,7 +296,7 @@ def test_queue_refuses_symlink_and_open_files(tmp_path):
 
 
 @tvl_free
-def test_queue_torn_tail_ignored_and_repaired(tmp_path):
+def test_queue_torn_tail_truncated_by_next_append(tmp_path):
     d = tmp_path / "q"
     q = LocalAuditQueue(d)
     q.append("u1", {"a": 1}, window_id="w")
@@ -303,12 +305,93 @@ def test_queue_torn_tail_ignored_and_repaired(tmp_path):
         fh.write(b'{"unit_id": "u2", "rec')
     assert q.list("w") == [{"unit_id": "u1", "record": {"a": 1}}]
     q.append("u3", {"c": 3}, window_id="w")
-    raw = path.read_bytes()
-    assert raw.endswith(b"\n")
+    assert path.read_bytes().count(b"\n") == 2
     assert q.list("w") == [
         {"unit_id": "u1", "record": {"a": 1}},
         {"unit_id": "u3", "record": {"c": 3}},
     ]
+
+
+@tvl_free
+def test_queue_torn_only_line_truncated_to_empty(tmp_path):
+    d = tmp_path / "q"
+    q = LocalAuditQueue(d)
+    q.append("u1", {}, window_id="w")
+    path = d / "w.jsonl"
+    path.write_bytes(b'{"unit_id": "u')
+    q.append("u2", {}, window_id="w")
+    assert q.list("w") == [{"unit_id": "u2", "record": {}}]
+
+
+@tvl_free
+def test_queue_malformed_complete_line_raises(tmp_path):
+    d = tmp_path / "q"
+    q = LocalAuditQueue(d)
+    q.append("u1", {}, window_id="w")
+    with open(d / "w.jsonl", "ab") as fh:
+        fh.write(b"SECRET-NOT-JSON\n")
+    q.append("u3", {}, window_id="w")
+    with pytest.raises(TuningError) as info:
+        q.list("w")
+    assert info.value.code == E_INVALID_TUNING
+    assert "SECRET" not in str(info.value)
+
+
+@tvl_free
+def test_queue_append_holds_lock_around_write(tmp_path, monkeypatch):
+    events = []
+    real_write = os.write
+
+    @contextlib.contextmanager
+    def fake_lock(fd):
+        events.append("enter")
+        yield
+        events.append("exit")
+
+    def spy_write(fd, data):
+        events.append("write")
+        return real_write(fd, data)
+
+    monkeypatch.setattr(mod, "_locked", fake_lock)
+    monkeypatch.setattr(mod.os, "write", spy_write)
+    LocalAuditQueue(tmp_path / "q").append("u", {}, window_id="w")
+    assert events[0] == "enter" and events[-1] == "exit" and "write" in events[1:-1]
+
+
+@tvl_free
+def test_queue_list_refuses_symlinked_directory(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    LocalAuditQueue(real).append("u", {}, window_id="w")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with pytest.raises(TuningError):
+        LocalAuditQueue(link).list("w")
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX only")
+@tvl_free
+def test_queue_fifo_refused_without_hanging(tmp_path):
+    d = tmp_path / "q"
+    d.mkdir(mode=0o700)
+    os.mkfifo(d / "w.jsonl", 0o600)
+    q = LocalAuditQueue(d)
+    with pytest.raises(TuningError):
+        q.list("w")
+    with pytest.raises(TuningError):
+        q.append("u", {}, window_id="w")
+
+
+@tvl_free
+def test_verify_short_or_non_bytes_key_false():
+    s = CommittedSampler("0.5", KEY, window_id="w")
+    c = s.commitment()
+    short = b"k" * 31
+    c_short = mod.SamplingCommitment(
+        c.mode, c.window_id, c.rate, hashlib.sha256(short).hexdigest()
+    )
+    assert verify_sampling(c_short, short, [], []) is False
+    assert verify_sampling(c, bytearray(KEY), [], []) is False
 
 
 @tvl_free

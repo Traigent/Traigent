@@ -22,7 +22,9 @@ import json
 import os
 import secrets
 import stat
-from collections.abc import Iterable, Mapping
+import sys
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -137,6 +139,8 @@ def verify(
     """
     if commitment.mode != SAMPLING_MODE or not isinstance(key, bytes):
         return False
+    if len(key) < _MIN_KEY_BYTES:
+        return False
     if not hmac.compare_digest(hashlib.sha256(key).hexdigest(), commitment.key_digest):
         return False
     try:
@@ -175,6 +179,51 @@ def sampler_from_monitor(
 
 _QUEUE_ERR = "audit queue path is not safe"
 _POSIX = os.name == "posix"
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+@contextmanager
+def _locked(fd: int) -> Iterator[None]:
+    """Hold an exclusive lock on the open file for the block."""
+    if sys.platform == "win32":  # pragma: no cover - exercised on Windows only
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+def _drop_torn_tail(fd: int) -> None:
+    """Truncate an unfinished last line: its append never returned success."""
+    size = os.lseek(fd, 0, os.SEEK_END)
+    if size == 0:
+        return
+    os.lseek(fd, size - 1, os.SEEK_SET)
+    if os.read(fd, 1) == b"\n":
+        return
+    end = size
+    while end > 0:
+        start = max(0, end - 4096)
+        os.lseek(fd, start, os.SEEK_SET)
+        chunk = os.read(fd, end - start)
+        cut = chunk.rfind(b"\n")
+        if cut >= 0:
+            os.ftruncate(fd, start + cut + 1)
+            return
+        end = start
+    os.ftruncate(fd, 0)
 
 
 def _queue_error() -> TuningError:
@@ -210,8 +259,9 @@ class LocalAuditQueue:
             raise _queue_error()
 
     def _open(self, path: Path, flags: int) -> int:
+        # O_NONBLOCK: opening a FIFO must not block before the regular-file check.
         try:
-            fd = open_verified(path, flags, 0o600)
+            fd = open_verified(path, flags | _NONBLOCK, 0o600)
         except FileNotFoundError:
             raise
         except OSError:
@@ -232,17 +282,18 @@ class LocalAuditQueue:
         ).encode("utf-8")
         fd = self._open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT)
         try:
-            size = os.fstat(fd).st_size
-            if size and os.pread(fd, 1, size - 1) != b"\n":
-                data = b"\n" + data  # repair the framing of a torn final line
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view) :]
+            with _locked(fd):
+                _drop_torn_tail(fd)
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view) :]
+                os.fsync(fd)
         finally:
             os.close(fd)
 
     def list(self, window_id: str) -> list[dict[str, Any]]:
         path = self._path(window_id)
+        self._check_dir()
         try:
             fd = self._open(path, os.O_RDONLY)
         except FileNotFoundError:
@@ -250,14 +301,11 @@ class LocalAuditQueue:
         with os.fdopen(fd, "rb") as handle:
             raw = handle.read()
         pieces = raw.split(b"\n")
-        pieces.pop()  # after the last newline: empty, or a torn line to ignore
+        pieces.pop()  # after the last newline: empty, or an unfinished append
         out: list[dict[str, Any]] = []
         for piece in pieces:
-            if not piece.strip():
-                continue
             try:
                 out.append(json.loads(piece))
             except ValueError:
-                # a torn line that a later append sealed with a newline
-                continue
+                raise _queue_error() from None
         return out
