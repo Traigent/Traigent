@@ -188,6 +188,39 @@ def test_sampler_rate_just_below_one_still_works():
 
 
 @tvl_free
+def test_sampler_rate_huge_exponent_refused_quickly():
+    with pytest.raises(TuningError) as exc:
+        CommittedSampler("1e-10000000", KEY, window_id="w")
+    assert exc.value.code == E_INVALID_TUNING
+
+
+@tvl_free
+def test_verify_huge_exponent_commitment_refused_quickly():
+    c = mod.SamplingCommitment(
+        mod.SAMPLING_MODE,
+        "w",
+        "1e-10000000",
+        hashlib.sha256(KEY).hexdigest(),
+    )
+    assert not verify_sampling(c, KEY, [], [])
+
+
+@tvl_free
+def test_rate_with_30_decimal_places_accepted():
+    rate = f"0.{'0' * 29}1"  # 30 places
+    s = CommittedSampler(rate, KEY, window_id="w")
+    assert s.commitment().rate == rate
+
+
+@tvl_free
+def test_rate_with_31_decimal_places_refused():
+    rate = f"0.{'0' * 30}1"  # 31 places
+    with pytest.raises(TuningError) as exc:
+        CommittedSampler(rate, KEY, window_id="w")
+    assert exc.value.code == E_INVALID_TUNING
+
+
+@tvl_free
 def test_window_id_required_and_valid():
     with pytest.raises(TypeError):
         CommittedSampler("0.5", KEY)  # type: ignore[call-arg]
