@@ -17,6 +17,7 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any, cast
 
+from traigent.cloud.url_security import same_host_redirect_trace_configs
 from traigent.labels.transport_gate import gate_session
 from traigent.utils.exceptions import (
     NonRetryableError,
@@ -595,6 +596,7 @@ async def resilient_backend_request(
 
         async with gate_session(
             aiohttp.ClientSession(
+                trace_configs=same_host_redirect_trace_configs(),
                 timeout=request_timeout,
                 trust_env=True,
             ),
