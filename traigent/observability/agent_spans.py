@@ -48,11 +48,12 @@ class SpanResult:
 
 
 def _is_safe_number(value: Any) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:  # an int too large for a float (e.g. 10**400)
+        return False
 
 
 def _coerce_non_negative_int(value: int | None, *, field_name: str) -> int:
@@ -249,7 +250,12 @@ def add_agent_span(
         safe_metadata["model"] = safe_model
 
     end_time = datetime.now(UTC)
-    start_time = end_time - timedelta(milliseconds=safe_latency_ms)
+    try:
+        start_time = end_time - timedelta(milliseconds=safe_latency_ms)
+    except (OverflowError, ValueError):
+        # Finite but unrepresentable duration (e.g. 1e30 ms): keep the span and
+        # its receipt; the timestamps collapse to a zero-length interval.
+        start_time = end_time
 
     span = SpanPayload(
         span_id=uuid.uuid4().hex[:16],
