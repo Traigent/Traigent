@@ -540,8 +540,13 @@ class FlushResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+    items_suppressed: int = 0
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        if not self.items_suppressed:
+            del result["items_suppressed"]
+        return result
 
 
 @dataclass

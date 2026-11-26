@@ -71,6 +71,7 @@ from traigent.utils.exceptions import (
 from traigent.utils.logging import get_logger
 from traigent.utils.pagination import iter_pages
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
+from traigent.utils.send_policy import may_send_telemetry
 from traigent.utils.url_segments import quote_path_segment
 
 logger = get_logger(__name__)
@@ -1014,6 +1015,18 @@ class _BufferedPayload:
     generation: int = 0
 
 
+class _SuppressedBatch:
+    """Tell the trace outbox to settle a batch without counting a delivery."""
+
+
+_BATCH_SUPPRESSED = _SuppressedBatch()
+
+
+@dataclass
+class _TraceBatchFlushResult(BatchFlushResult):
+    items_suppressed: int = 0
+
+
 class _SyncBatchTransport:
     """Thread-safe batch transport that avoids cross-thread asyncio coordination.
 
@@ -1035,7 +1048,9 @@ class _SyncBatchTransport:
 
     def __init__(
         self,
-        sender: Callable[[list[dict[str, Any]]], dict[str, Any] | None],
+        sender: Callable[
+            [list[dict[str, Any]]], dict[str, Any] | _SuppressedBatch | None
+        ],
         *,
         batch_size: int,
         max_buffer_age: float,
@@ -1100,6 +1115,7 @@ class _SyncBatchTransport:
         # in-flight snapshot of a lower generation (#2609).
         self._inflight_generations: dict[str, int] = {}
         self._delivered_digests: OrderedDict[str, bytes] = OrderedDict()
+        self._suppressed_digests: OrderedDict[str, bytes] = OrderedDict()
         # Items whose latest snapshot the backend accepted (#2604). Unlike
         # `_delivered_digests` it survives a response with warnings, so the
         # client can tell "confirmed" from "pending". Not an LRU: an entry
@@ -1109,6 +1125,7 @@ class _SyncBatchTransport:
         self._settled_items: set[str] = set()
         self._oldest_inflight_started_at: float | None = None
         self._active_send_completion: threading.Event | None = None
+        self._items_suppressed = 0
         self._stats: dict[str, int] = {
             "submitted_items": 0,
             "sent_items": 0,
@@ -1226,13 +1243,16 @@ class _SyncBatchTransport:
                 )
             elif (
                 item_id not in self._buffer
-                and self._delivered_digests.get(item_id) == buffered_payload.digest
+                and buffered_payload.digest
+                in (
+                    self._delivered_digests.get(item_id),
+                    self._suppressed_digests.get(item_id),
+                )
                 and self._inflight_digests.get(item_id, buffered_payload.digest)
                 == buffered_payload.digest
             ):
-                # Already delivered exactly this snapshot, and nothing different
-                # is queued or in flight that would land after it: re-sending it
-                # would only repeat the same write.
+                # Exactly this snapshot was delivered or settled under suppression.
+                # Nothing different is queued or in flight to supersede it.
                 self._stats["skipped_unchanged_items"] += 1
             elif (
                 item_id not in self._buffer and len(self._buffer) >= self.max_queue_size
@@ -1249,6 +1269,7 @@ class _SyncBatchTransport:
             else:
                 self._buffer.pop(item_id, None)
                 self._settled_items.discard(item_id)
+                self._suppressed_digests.pop(item_id, None)
                 self._buffer[item_id] = replace(
                     buffered_payload,
                     generation=self._resolve_generation_locked(
@@ -1278,9 +1299,7 @@ class _SyncBatchTransport:
         return True
 
     def is_settled(self, item_id: str) -> bool:
-        """True iff the backend accepted this item and nothing newer for it is
-        queued or in flight. A failed send leaves the item buffered, so a
-        failed or unconfirmed item is never settled (#2604)."""
+        """Whether the item was sent or suppressed and has no pending update."""
         with self._lock:
             return (
                 item_id in self._settled_items
@@ -1292,6 +1311,7 @@ class _SyncBatchTransport:
         """Forget an item's settled mark once the client has evicted it."""
         with self._lock:
             self._settled_items.discard(item_id)
+            self._suppressed_digests.pop(item_id, None)
 
     def flush(
         self,
@@ -1843,6 +1863,22 @@ class _SyncBatchTransport:
         result = self._retry_handler.execute_with_result(self._sender, payloads)
 
         if result.success:
+            if result.result is _BATCH_SUPPRESSED:
+                with self._lock:
+                    self._items_suppressed += len(batch_items) + len(self._buffer)
+                    for item_id, _ in batch_items:
+                        digest = self._inflight_digests.pop(item_id, None)
+                        if digest is not None:
+                            self._suppressed_digests[item_id] = digest
+                        self._settled_items.add(item_id)
+                    for item_id, buffered in self._buffer.items():
+                        self._suppressed_digests[item_id] = buffered.digest
+                        self._settled_items.add(item_id)
+                    while len(self._suppressed_digests) > self.max_queue_size:
+                        self._suppressed_digests.popitem(last=False)
+                    self._buffer.clear()
+                    self._cancel_timer_locked()
+                return True, events
             return True, self._record_batch_success(
                 batch_items, payloads, result, events
             )
@@ -1875,7 +1911,8 @@ class _SyncBatchTransport:
                     "Observability transport flush deadline exceeded before "
                     "delivery completed"
                 )
-            return BatchFlushResult(
+            return _TraceBatchFlushResult(
+                items_suppressed=self._items_suppressed,
                 success=self._stats["failed_batches"] == 0 and remaining == 0,
                 items_sent=self._stats["sent_items"],
                 items_pending=remaining,
@@ -2986,13 +3023,17 @@ class ObservabilityClient:
 
         When delivery is suppressed (offline mode, ``TRAIGENT_DISABLE_TELEMETRY``,
         or no credential), the result keeps ``success=True`` so telemetry never
-        breaks the host application, but ``items_sent`` is 0 and ``warnings``
-        names the cause. Check ``items_sent`` rather than ``success`` alone to
+        breaks the host application. ``items_suppressed`` counts queued snapshots
+        discarded under the current policy, and ``items_sent`` counts deliveries. Check ``items_sent`` rather than ``success`` alone to
         confirm delivery.
         """
         deadline = self._flush_deadline(timeout)
         if self._ingest_suppressed:
             self._log_offline_mode_once()
+            if not may_send_telemetry():
+                return self._with_suppressed_delivery_warning(
+                    self._flush_transport_until(deadline)
+                )
             return self._suppressed_flush_result()
         if not self._acquire_client_lock_until(deadline):
             return self._flush_lock_timeout_result(deadline)
@@ -3171,6 +3212,13 @@ class ObservabilityClient:
 
     @staticmethod
     def _flush_result_from_transport(result: BatchFlushResult) -> FlushResult:
+        suppressed = getattr(result, "items_suppressed", 0)
+        warnings = result.warnings
+        if suppressed:
+            warnings = [
+                *warnings,
+                "Observability trace batches were suppressed by telemetry policy",
+            ]
         return FlushResult(
             success=result.success,
             items_sent=result.items_sent,
@@ -3179,7 +3227,8 @@ class ObservabilityClient:
             successful_batches=result.successful_batches,
             failed_batches=result.failed_batches,
             errors=result.errors,
-            warnings=result.warnings,
+            warnings=warnings,
+            items_suppressed=suppressed,
         )
 
     def _flush_transport_until(self, deadline: float | None) -> FlushResult:
@@ -3203,16 +3252,7 @@ class ObservabilityClient:
             "Observability transport close is pending; the client remains closed "
             "to new snapshots until a later close completes teardown"
         )
-        return FlushResult(
-            success=False,
-            items_sent=result.items_sent,
-            items_pending=result.items_pending,
-            items_dropped=result.items_dropped,
-            successful_batches=result.successful_batches,
-            failed_batches=result.failed_batches,
-            errors=result.errors,
-            warnings=[*result.warnings, warning],
-        )
+        return replace(result, success=False, warnings=[*result.warnings, warning])
 
     def _flush_lock_timeout_result(self, deadline: float | None) -> FlushResult:
         """Report that flush never inspected client state or submitted snapshots."""
@@ -3679,10 +3719,11 @@ class ObservabilityClient:
 
     def _send_payload_batch(
         self, traces: list[dict[str, Any]]
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, Any] | _SuppressedBatch | None:
         if self._sender_override is not None:
             return self._sender_override(traces)
-
+        if not may_send_telemetry():
+            return _BATCH_SUPPRESSED
         return self._post_batch_sync(traces)
 
     def _optimization_only_policy(self) -> oo_egress.Policy:
@@ -3710,16 +3751,21 @@ class ObservabilityClient:
         """
         return (
             self.config.offline_mode
+            or not may_send_telemetry()
             or self._credential_egress_disabled
             or oo_egress.is_active(self._optimization_only_policy())
         ) and not self._has_custom_trace_sender
 
-    def _post_batch_sync(self, traces: list[dict[str, Any]]) -> dict[str, Any] | None:
-        if oo_egress.is_active(self._optimization_only_policy()):
-            # optimization_only: the server refuses trace ingest; nothing is sent.
-            return None
+    def _post_batch_sync(
+        self, traces: list[dict[str, Any]]
+    ) -> dict[str, Any] | _SuppressedBatch | None:
         if self.config.offline_mode or self._credential_egress_disabled:
             self._log_offline_mode_once()
+            return None
+        if not may_send_telemetry():
+            return _BATCH_SUPPRESSED
+        if oo_egress.is_active(self._optimization_only_policy()):
+            # optimization_only: the server refuses trace ingest; nothing is sent.
             return None
         # ONE snapshot of destination + headers: validated and sent as-is, never
         # re-read from config after the (possibly slow) gate.
@@ -3740,10 +3786,13 @@ class ObservabilityClient:
             headers=snapshot_headers,
             method="POST",
         )
+        timeout = self.config.effective_request_timeout(len(traces))
+        if not may_send_telemetry():
+            return _BATCH_SUPPRESSED
         try:
             with self._open_http_request(
                 http_request,
-                timeout=self.config.effective_request_timeout(len(traces)),
+                timeout=timeout,
             ) as response:
                 status_code = getattr(response, "status", 200)
                 body = response.read().decode("utf-8") if response else ""
@@ -4053,7 +4102,7 @@ class ObservabilityClient:
         must never break the host application), so this warning is what lets a
         caller tell "nothing was delivered" apart from a real delivery (#2602).
         """
-        if self.config.offline_mode:
+        if self.config.offline_mode or not may_send_telemetry():
             cause = f"offline mode is enabled ({describe_offline_mode_cause()})"
         else:
             cause = (
@@ -4078,9 +4127,12 @@ class ObservabilityClient:
         )
 
     def _with_suppressed_delivery_warning(self, result: FlushResult) -> FlushResult:
-        return replace(
-            result, warnings=[*result.warnings, self._suppressed_delivery_warning()]
+        warning = (
+            "Observability trace delivery was suppressed for the remaining batches"
+            if result.items_sent
+            else self._suppressed_delivery_warning()
         )
+        return replace(result, warnings=[*result.warnings, warning])
 
     def _build_query_string(self, **params: Any) -> str:
         serialized: dict[str, str | list[str]] = {}

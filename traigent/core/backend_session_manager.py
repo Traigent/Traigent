@@ -68,7 +68,7 @@ from traigent.evaluators.base import Dataset
 from traigent.metrics.content_features import SimhashFeatureExtractor
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils import optimization_only_egress as oo_egress
-from traigent.utils.env_config import is_untracked_fallback_allowed
+from traigent.utils.env_config import is_backend_offline, is_untracked_fallback_allowed
 from traigent.utils.example_id import (
     LOCAL_MARKER_KEY,
     TRIAL_ROW_INDICES_ATTR,
@@ -1068,7 +1068,7 @@ class BackendSessionManager:
     def _egress_disabled(self) -> bool:
         """Return true when this manager must not touch backend egress paths."""
 
-        if bool(getattr(self, "_no_egress", False)):
+        if bool(getattr(self, "_no_egress", False)) or is_backend_offline():
             return True
         config = getattr(self, "_traigent_config", None)
         return bool(config is not None and backend_egress_disabled(config))
@@ -1086,7 +1086,7 @@ class BackendSessionManager:
         policy or env, or ``config.no_egress`` set before the fallback fired) still
         does: an explicit egress ban fails closed.
         """
-        if bool(getattr(self, "_no_egress", False)):
+        if bool(getattr(self, "_no_egress", False)) or is_backend_offline():
             return False
         if not self._egress_disabled():
             return True

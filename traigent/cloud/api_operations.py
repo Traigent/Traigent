@@ -588,6 +588,10 @@ class ApiOperations:
                     connector,
                     typed_exc,
                 )
+        except CloudEgressBlockedError as exc:
+            if is_backend_offline():
+                raise
+            self._handle_generic_session_exception(exc)
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -1106,6 +1110,7 @@ class ApiOperations:
                 {"allow_redirects": False} if crew_declaration_sent else {}
             )
 
+            self._raise_if_backend_egress_disabled("create session")
             async with session.post(
                 url,
                 json=payload,

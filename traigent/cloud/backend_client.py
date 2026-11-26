@@ -1731,6 +1731,13 @@ class BackendIntegratedClient:
 
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
+        from traigent.utils.send_policy import (
+            _usage_analytics_submission,
+            may_send_telemetry,
+        )
+
+        if _usage_analytics_submission.get() and not may_send_telemetry():
+            return self
         if cloud_backend_egress_disabled(self.no_egress):
             return self
         # Fail closed on an unusable backend URL: the placeholder origin set in
@@ -3379,6 +3386,10 @@ class BackendIntegratedClient:
         features: list[dict[str, Any]] | dict[str, Any],
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
+        from traigent.utils.send_policy import may_send_telemetry
+
+        if not may_send_telemetry():
+            return False
         self._raise_if_backend_egress_disabled("upload example features")
         # Per-example features describe the dataset: not available in this mode.
         oo_egress.refuse_if_active(
@@ -3422,6 +3433,8 @@ class BackendIntegratedClient:
                 experiment_run_id,
                 exc,
             )
+            return False
+        if not may_send_telemetry():
             return False
         url = self._build_feature_upload_url(experiment_run_id)
         if not url:
@@ -3468,6 +3481,10 @@ class BackendIntegratedClient:
         headers: dict[str, str],
     ) -> bool:
         """POST one feature chunk; True when the service accepted it."""
+        from traigent.utils.send_policy import may_send_telemetry
+
+        if not may_send_telemetry():
+            return False
         # Re-check policy at the send site: the chunk path must refuse exactly
         # like the single-request upload when egress is disallowed.
         self._raise_if_backend_egress_disabled("upload example features")
@@ -3477,9 +3494,13 @@ class BackendIntegratedClient:
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
+            if not may_send_telemetry():
+                return None
             try:
                 body_json = freeze_json_body(payload)
                 preflight_requests("POST", url, json=body_json)
+                if not may_send_telemetry():
+                    return None
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=body_json,
@@ -3507,6 +3528,8 @@ class BackendIntegratedClient:
             _post_example_features,
             self.max_retries,
         )
+        if response is None:
+            return False
         _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
 
         if response.status_code >= 400:

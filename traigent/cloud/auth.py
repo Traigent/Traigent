@@ -1793,6 +1793,8 @@ class AuthManager:
             backend_api_url,
             purpose="backend key validation",
         )
+        if is_backend_offline():
+            return self._backend_egress_reason(True)
         url = f"{backend_api_url.rstrip('/')}/keys/validate"
 
         validation_payload = {"api_key": api_key}
@@ -1831,6 +1833,8 @@ class AuthManager:
                     trust_env=True,
                 )
             ) as session:
+                if is_backend_offline():
+                    return self._backend_egress_reason(True)
                 async with session.post(
                     url,
                     headers=headers,
@@ -2024,6 +2028,8 @@ class AuthManager:
         try:
             validation_payload = freeze_json_body(validation_payload)
             preflight_requests("POST", url, json=validation_payload)
+            if is_backend_offline():
+                return self._backend_egress_reason(True)
             response = requests.post(
                 url,
                 headers=headers,

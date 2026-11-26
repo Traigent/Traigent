@@ -609,6 +609,8 @@ class TrialOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
+                if is_backend_offline():
+                    return None
                 async with session.post(
                     url,
                     json=registration_payload,
@@ -799,6 +801,8 @@ class TrialOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
+                if is_backend_offline():
+                    return TrialSlotResult.unavailable()
                 async with session.post(
                     url,
                     json=request_body,
@@ -1345,6 +1349,14 @@ class TrialOperations:
         """
         # Skip backend calls in offline mode — return None so callers
         # can distinguish "skipped" from "succeeded" (Rule 2: no fake completion).
+        from traigent.utils.send_policy import (
+            _usage_analytics_submission,
+            may_send_telemetry,
+        )
+
+        analytics = _usage_analytics_submission.get()
+        if analytics and not may_send_telemetry():
+            return None
         if is_backend_offline():
             logger.debug(
                 "Offline mode: skipping trial result submission for %s",
@@ -1377,6 +1389,8 @@ class TrialOperations:
                 return False
             result_data, clean_metrics = prepared
 
+            if is_backend_offline() or (analytics and not may_send_telemetry()):
+                return None
             headers = await self.client.auth_manager.augment_headers(
                 _JSON_CONTENT_TYPE_HEADER
             )
@@ -1402,6 +1416,8 @@ class TrialOperations:
                 wire_result = fitted
 
                 for attempt in range(_TRIAL_SUBMIT_MAX_ATTEMPTS):
+                    if is_backend_offline() or (analytics and not may_send_telemetry()):
+                        return None
                     async with session.post(
                         url,
                         json=wire_result,
@@ -1594,6 +1610,8 @@ class TrialOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                     session_id=session_id,
                 )
+                if is_backend_offline():
+                    return None
                 async with session.post(
                     url,
                     json=wire_submission,
@@ -1732,6 +1750,8 @@ class TrialOperations:
                 )
 
                 try:
+                    if is_backend_offline():
+                        return None
                     async with session.put(
                         url,
                         json=request_data,

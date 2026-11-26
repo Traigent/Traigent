@@ -314,7 +314,7 @@ except ImportError:
     from typing import TYPE_CHECKING, Any
 
     from traigent.core.trace_env import is_trace_enabled
-    from traigent.utils.env_config import is_backend_offline
+    from traigent.utils.send_policy import may_send_telemetry
 
     # Check if tracing is enabled and OpenTelemetry is available
     TRACING_ENABLED = is_trace_enabled()
@@ -527,7 +527,9 @@ except ImportError:
         except UnsafeTraceHeadersError:
             return None  # fail closed: no exporter, tracing off (already logged)
         frozen_key = _effective_trace_api_key(headers)
-        if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
+        if not may_send_telemetry() or not oo_egress.ensure_trace_egress_allowed(
+            frozen_key, otlp_endpoint
+        ):
             # A denial may be transient (validation failure has a 60 s TTL in the
             # central gate): do not cache None, re-consult the gate on later calls.
             _initialized = False
@@ -572,7 +574,7 @@ except ImportError:
         initialized by an earlier online run is not used by an offline one.
         """
         global _tracer, _provider, _initialized
-        if is_backend_offline():
+        if not may_send_telemetry():
             return None
         if _tracer is not None and _optimization_only_blocks_export(
             None, _frozen_api_key

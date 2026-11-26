@@ -42,7 +42,7 @@ from traigent.observability.otel.transport import (
     TransportResponse,
 )
 from traigent.utils import optimization_only_egress as oo_egress
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.send_policy import may_send_telemetry
 
 RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 
@@ -132,7 +132,7 @@ class TraigentOTLPExporter(SpanExporter):
         outcome = ExportOutcome()
         if not spans:
             return outcome
-        if is_backend_offline() or oo_egress.is_active(
+        if not may_send_telemetry() or oo_egress.is_active(
             scope=getattr(self, "oo_scope", None)
         ):
             # Send-time recheck, fail closed: spans queued while online are
@@ -240,6 +240,9 @@ class TraigentOTLPExporter(SpanExporter):
             timeout = (
                 self._timeout if remaining is None else min(self._timeout, remaining)
             )
+            if not may_send_telemetry():
+                outcome.dropped_offline += count
+                return
             try:
                 resp = self._transport.post(body, timeout=timeout)
             except TransportError:
@@ -266,7 +269,7 @@ class TraigentOTLPExporter(SpanExporter):
         # optimization_only needs no 403 latch here: the mode disables the exporter
         # (init, processor and these two checks) before anything is sent, so the OTLP
         # receiver's non-JSON 403 body is never reached.
-        if is_backend_offline() or oo_egress.is_active(
+        if not may_send_telemetry() or oo_egress.is_active(
             scope=getattr(self, "oo_scope", None)
         ):  # recheck every POST
             outcome.dropped_offline += count

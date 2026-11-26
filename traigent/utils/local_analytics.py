@@ -25,6 +25,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
+from traigent.utils.send_policy import _usage_analytics_submission, may_send_telemetry
 
 # Import constant with fallback for base-only installs (cloud module not available)
 try:
@@ -99,11 +100,10 @@ def usage_analytics_allowed(config: TraigentConfig) -> bool:
     ``enable_usage_analytics`` is unchanged.
     """
     from traigent.core.execution_policy_runtime import backend_egress_disabled
-    from traigent.observability.config import _read_observability_offline_mode
 
     if not config.enable_usage_analytics:
         return False
-    if _read_observability_offline_mode() or getattr(config, "offline", False) is True:
+    if not may_send_telemetry() or getattr(config, "offline", False) is True:
         return False
     return not backend_egress_disabled(config)
 
@@ -325,6 +325,8 @@ class LocalAnalytics:
             if api_key_error:
                 return {"success": False, "reason": api_key_error}
 
+            if not may_send_telemetry():
+                return {"success": False, "reason": "Analytics disabled"}
             backend_client = backend_client_module.get_backend_client(
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),
@@ -332,8 +334,13 @@ class LocalAnalytics:
                 timeout=5.0,  # Short timeout for analytics - don't block program exit
             )
 
+            if not may_send_telemetry():
+                return {"success": False, "reason": "Analytics disabled"}
+            submission = _usage_analytics_submission.set(True)
             try:
                 await backend_client.__aenter__()
+                if not may_send_telemetry():
+                    return {"success": False, "reason": "Analytics disabled"}
                 # Create a lightweight analytics session
                 # Using the hybrid session method for analytics submission
                 (
@@ -362,6 +369,8 @@ class LocalAnalytics:
                     },
                 )
 
+                if not may_send_telemetry():
+                    return {"success": False, "reason": "Analytics disabled"}
                 # Submit the aggregated stats as trial results
                 success = await backend_client.submit_privacy_trial_results(
                     session_id=session_id,
@@ -371,6 +380,8 @@ class LocalAnalytics:
                     duration=1.0,  # Analytics collection time
                 )
 
+                if not success and not may_send_telemetry():
+                    return {"success": False, "reason": "Analytics disabled"}
                 if success:
                     self._update_last_submission()
                     return {
@@ -385,6 +396,7 @@ class LocalAnalytics:
                         "reason": "Failed to submit trial results",
                     }
             finally:
+                _usage_analytics_submission.reset(submission)
                 # Ensure session is closed even on cancellation
                 await _close_analytics_backend_client(
                     backend_client_module, backend_client
@@ -399,6 +411,8 @@ class LocalAnalytics:
             logger.debug(endpoint_missing_message("analytics submission"))
             return {"success": False, "reason": "No backend endpoint configured"}
         except Exception as e:
+            if not may_send_telemetry():
+                return {"success": False, "reason": "Analytics disabled"}
             logger.debug(f"Analytics submission failed: {e}")
             return {"success": False, "reason": str(e)}
 

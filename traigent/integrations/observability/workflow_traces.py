@@ -870,14 +870,15 @@ class WorkflowTracesClient:
             TraceIngestionResponse with ingestion results
         """
         from traigent.utils import optimization_only_egress as oo_egress
-        from traigent.utils.env_config import is_backend_offline
+        from traigent.utils.send_policy import may_send_telemetry
+
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
 
         if oo_egress.is_active(
             oo_egress.policy_from_headers(self.backend_url, self._get_headers())
         ):
             return TraceIngestionResponse(success=False, error="optimization_only")
-        if is_backend_offline():
-            return TraceIngestionResponse(success=False, error="offline")
         # ONE snapshot of destination + credential, validated and sent as-is.
         snap_url = self.backend_url
         snap_headers = self._get_headers()
@@ -917,6 +918,8 @@ class WorkflowTracesClient:
             preflight_requests(
                 "POST", ingest_url, json=request_payload, headers=snap_headers
             )
+            if not may_send_telemetry():
+                return TraceIngestionResponse(success=False, error="offline")
             response = requests.post(
                 ingest_url,
                 json=request_payload,
@@ -967,22 +970,29 @@ class WorkflowTracesClient:
             TraceIngestionResponse with ingestion results
         """
         from traigent.utils import optimization_only_egress as oo_egress
-        from traigent.utils.env_config import is_backend_offline
+        from traigent.utils.send_policy import may_send_telemetry
+
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
 
         if oo_egress.is_active(
             oo_egress.policy_from_headers(self.backend_url, self._get_headers())
         ):
             return TraceIngestionResponse(success=False, error="optimization_only")
-        if is_backend_offline():
-            return TraceIngestionResponse(success=False, error="offline")
         # the gate may wait on a bounded key validation: keep it off the event loop
         snap_url = self.backend_url
         snap_headers = self._get_headers()
-        if not await asyncio.to_thread(
-            lambda: oo_egress.ensure_trace_egress_allowed(
-                snap_headers.get("X-API-Key"), snap_url, headers=snap_headers
+        allowed = await asyncio.to_thread(
+            lambda: (
+                may_send_telemetry()
+                and oo_egress.ensure_trace_egress_allowed(
+                    snap_headers.get("X-API-Key"), snap_url, headers=snap_headers
+                )
             )
-        ):
+        )
+        if not may_send_telemetry():
+            return TraceIngestionResponse(success=False, error="offline")
+        if not allowed:
             return TraceIngestionResponse(success=False, error="optimization_only")
 
         if not AIOHTTP_AVAILABLE:
@@ -1013,6 +1023,8 @@ class WorkflowTracesClient:
             headers = snap_headers
 
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+                if not may_send_telemetry():
+                    return TraceIngestionResponse(success=False, error="offline")
                 async with session.post(
                     url,
                     json=request_payload,
@@ -1786,7 +1798,10 @@ def setup_workflow_tracing(
         or BackendConfig.get_cloud_backend_url()
     )
     from traigent.utils import optimization_only_egress as oo_egress
+    from traigent.utils.send_policy import may_send_telemetry
 
+    if not may_send_telemetry():
+        return None
     if not oo_egress.ensure_trace_egress_allowed(
         auth_token
         or os.environ.get("TRAIGENT_API_KEY")

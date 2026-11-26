@@ -397,6 +397,13 @@ def _initialize_tracer() -> Tracer | None:
 
 def get_tracer() -> Tracer | None:
     """Get the Traigent tracer, initializing if needed."""
+    try:
+        from traigent.utils.send_policy import may_send_telemetry
+    except ImportError:
+        # Older SDKs enforce the policies available to their exporter.
+        return _initialize_tracer()
+    if not may_send_telemetry():
+        return None
     return _initialize_tracer()
 
 
