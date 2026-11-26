@@ -428,6 +428,8 @@ class DummyPrivacyServer:
                 is not None,
                 "snapshot_g1_sent": bool(request_dict.get("snapshot_g1_required"))
                 or request_dict.get("snapshot_g1_deadline_days") is not None,
+                "crew_declaration_sent": request_dict.get("crew_declaration")
+                is not None,
             }
         )
 
