@@ -3814,11 +3814,14 @@ class ObservabilityClient:
         # re-read from config after the (possibly slow) gate.
         ingest_url = self.config.ingest_url
         snapshot_headers = dict(self.config.build_headers())
-        if not oo_egress.ensure_trace_egress_allowed(
+        allowed = oo_egress._trace_egress_decision(
             self.config.api_key,
             ingest_url,
             headers=snapshot_headers,
-        ):
+        )
+        if allowed is None:
+            return _BATCH_SUPPRESSED
+        if not allowed:
             # fresh process, key unvalidated/restricted/unreachable: send nothing
             return None if may_send_telemetry() else _BATCH_SUPPRESSED
 

@@ -501,7 +501,7 @@ def _run_sync_backend_request_with_retry(
         return result.result
 
     error = result.error
-    if isinstance(error, AuthenticationError):
+    if isinstance(error, (AuthenticationError, CloudEgressBlockedError)):
         raise error
     # Fixed text only: the transient errors above carry a pre-sanitized message; any
     # other failure (e.g. a ``requests`` InvalidHeader quoting a header value) is named
@@ -3028,6 +3028,7 @@ class BackendIntegratedClient:
             try:
                 body_json = freeze_json_body(payload)
                 preflight_requests("POST", url, json=body_json)
+                self._raise_if_backend_egress_disabled("publish best config")
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=body_json,
@@ -3297,6 +3298,7 @@ class BackendIntegratedClient:
         # bounds a stalled Backend; the body is a few hundred bytes, so the
         # read limit effectively bounds the whole answer.
         preflight_requests("POST", url)
+        self._raise_if_backend_egress_disabled("fetch content-identity keys")
         response = requests.post(  # nosec B113 - timeout is provided
             url,
             headers=headers,
@@ -3359,6 +3361,7 @@ class BackendIntegratedClient:
         try:
             body = freeze_json_body(body)
             preflight_requests(method, url, json=body)
+            self._raise_if_backend_egress_disabled("call the process-record service")
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
                 url,
@@ -3373,9 +3376,8 @@ class BackendIntegratedClient:
                 code = _envelope_error_code(response)
             else:
                 payload = response.json()
-        except TransportGateRefusal:
-            # Counts-only refusal (route + counts + cause type name): safe to
-            # propagate, and must not be masked as a transport error.
+        except (CloudEgressBlockedError, TransportGateRefusal):
+            # Policy refusals carry no request or response content.
             raise
         except Exception:  # noqa: BLE001 - closed re-raise below
             failure = "TRANSPORT_ERROR"

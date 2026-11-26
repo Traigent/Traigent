@@ -173,9 +173,7 @@ def test_legacy_batches(monkeypatch, flag, point):
             _flip(monkeypatch, flag)
         return BytesIO(b"{}")
 
-    monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", validate
-    )
+    monkeypatch.setattr(optimization_only_egress, "_trace_egress_decision", validate)
     client = ObservabilityClient(
         ObservabilityConfig(
             backend_origin=ORIGIN,
@@ -1077,9 +1075,7 @@ def test_legacy_retry(monkeypatch, flag):
 
     calls = []
     validations = Mock(return_value=True)
-    monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", validations
-    )
+    monkeypatch.setattr(optimization_only_egress, "_trace_egress_decision", validations)
     client = ObservabilityClient(
         ObservabilityConfig(
             backend_origin=ORIGIN,
@@ -1477,6 +1473,93 @@ def test_best_config_rechecks_before_each_get(monkeypatch, flag, point):
 
 
 @pytest.mark.parametrize("flag", (None, OFFLINE))
+@pytest.mark.parametrize("operation", ("publish", "purpose-keys", "process-record"))
+def test_sync_backend_writes_recheck_after_preflight(monkeypatch, flag, operation):
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    client = backend_client.BackendIntegratedClient.__new__(
+        backend_client.BackendIntegratedClient
+    )
+    client.no_egress = False
+    client.api_base_url = ORIGIN
+    client.project_id = "project"
+    client.timeout = 1
+    client.max_retries = 1
+    headers = Mock(return_value=dict(HEADERS))
+    client._get_sync_auth_headers = headers
+    spec = {"config_id": "config"}
+    response = SimpleNamespace(status_code=200, headers={}, json=lambda: {"data": spec})
+    send = Mock(return_value=response)
+    monkeypatch.setattr(requests, "post", send)
+    monkeypatch.setattr(requests, "request", send)
+    preflight = backend_client.preflight_requests
+
+    def before_send(*args, **kwargs):
+        headers.assert_called_once_with(target="backend")
+        preflight(*args, **kwargs)
+        _flip(monkeypatch, flag)
+
+    monkeypatch.setattr(backend_client, "preflight_requests", before_send)
+    calls = {
+        "publish": (
+            lambda: client.publish_best_config_sync(spec),
+            "publish best config",
+        ),
+        "purpose-keys": (
+            client.fetch_content_identity_grant_sync,
+            "fetch content-identity keys",
+        ),
+        "process-record": (
+            lambda: client.finalize_process_record_sync("record", {}),
+            "call the process-record service",
+        ),
+    }
+    call, offline_operation = calls[operation]
+    if flag is None:
+        assert call() == (spec if operation == "publish" else {"data": spec})
+        send.assert_called_once()
+    else:
+        with pytest.raises(CloudEgressBlockedError, match=offline_operation):
+            call()
+        send.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", (None, OFFLINE))
+def test_best_config_publish_rechecks_after_retry_backoff(monkeypatch, flag):
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    client = backend_client.BackendIntegratedClient.__new__(
+        backend_client.BackendIntegratedClient
+    )
+    client.no_egress = False
+    client.api_base_url = ORIGIN
+    client.project_id = "project"
+    client.timeout = 1
+    client.max_retries = 1
+    client._get_sync_auth_headers = Mock(return_value=dict(HEADERS))
+    spec = {"config_id": "config"}
+    post = Mock(
+        side_effect=[
+            SimpleNamespace(status_code=503, text="unavailable", headers={}),
+            SimpleNamespace(status_code=201, headers={}, json=lambda: {"data": spec}),
+        ]
+    )
+    sleep = Mock(side_effect=lambda _: _flip(monkeypatch, flag))
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr("time.sleep", sleep)
+
+    if flag is None:
+        assert client.publish_best_config_sync(spec) == spec
+        assert post.call_count == 2
+        assert post.call_args_list[0] == post.call_args_list[1]
+    else:
+        with pytest.raises(CloudEgressBlockedError, match="publish best config"):
+            client.publish_best_config_sync(spec)
+        post.assert_called_once()
+    sleep.assert_called_once()
+
+
+@pytest.mark.parametrize("flag", (None, OFFLINE))
 @pytest.mark.parametrize(
     "operation", ("intermediate", "run-status", "measures", "experiment-status")
 )
@@ -1557,7 +1640,9 @@ def _api_key_manager(monkeypatch, flag, point, *, aiohttp_available):
             return Context().run(operation, *args)
 
         monkeypatch.setattr(
-            asyncio.get_running_loop(), "run_in_executor", run_in_worker_context
+            asyncio.get_running_loop(),
+            "run_in_executor",
+            Mock(side_effect=run_in_worker_context),
         )
         post = Mock(
             return_value=SimpleNamespace(
@@ -1617,6 +1702,9 @@ async def test_telemetry_key_validation(monkeypatch, flag, point, aiohttp_availa
     assert manager._stats["failed_authentications"] == 0
     if aiohttp_available:
         assert open_session.call_count == int(flag is None or point == "send")
+    elif flag is not None and point == "validation":
+        # A denial during URL validation must stop before the worker's own checks.
+        assert asyncio.get_running_loop().run_in_executor.call_count == 0
 
 
 @pytest.mark.parametrize("flag", FLAGS)
@@ -1843,9 +1931,7 @@ def test_legacy_flush_with_open_breaker(monkeypatch, flag, point):
     sleep = Mock(side_effect=backoff)
     monkeypatch.setattr("time.sleep", sleep)
     validate = Mock(return_value=True)
-    monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", validate
-    )
+    monkeypatch.setattr(optimization_only_egress, "_trace_egress_decision", validate)
     send = Mock(side_effect=lambda *args, **kwargs: BytesIO(b"{}"))
     monkeypatch.setattr(client, "_open_http_request", send)
     try:
@@ -1878,9 +1964,7 @@ def test_legacy_batch_refused_by_validation(monkeypatch, flag):
         _flip(monkeypatch, flag)
         return False
 
-    monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", validate
-    )
+    monkeypatch.setattr(optimization_only_egress, "_trace_egress_decision", validate)
     client = _legacy_client()
     send = Mock()
     monkeypatch.setattr(client, "_open_http_request", send)
@@ -1899,6 +1983,77 @@ def test_legacy_batch_refused_by_validation(monkeypatch, flag):
 
 
 @pytest.mark.parametrize("flag", (OPT_OUT, OFFLINE))
+def test_legacy_flush_preserves_validation_suppression(monkeypatch, flag):
+    async def validate(url, **kwargs):
+        _flip(monkeypatch, flag)
+        return url
+
+    gate = optimization_only_egress
+    wait_for_validation = gate._await_trace_validation
+
+    def clear_after_validation(entry):
+        status = wait_for_validation(entry)
+        assert status == "withheld"
+        monkeypatch.delenv(flag)
+        return status
+
+    validation_post = Mock()
+    monkeypatch.setattr(gate, "is_traigent_trace_endpoint", lambda _: True)
+    monkeypatch.setattr(gate, "_await_trace_validation", clear_after_validation)
+    monkeypatch.setattr(auth, "validate_cloud_base_url_async", validate)
+    monkeypatch.setattr(
+        auth.aiohttp, "ClientSession", lambda **_: _Session(validation_post)
+    )
+    trace_post = Mock()
+    client = _legacy_client()
+    monkeypatch.setattr(client, "_open_http_request", trace_post)
+    gate.reset_trace_gate()
+    try:
+        client.start_trace("one", trace_id="one")
+        client.end_trace("one")
+        result = client.flush()
+        validation_post.assert_not_called()
+        trace_post.assert_not_called()
+        assert (result.items_sent, result.items_suppressed) == (0, 1)
+    finally:
+        client.close()
+        gate.reset_trace_gate()
+
+
+@pytest.mark.parametrize("flag", (OPT_OUT, OFFLINE))
+def test_legacy_flush_suppresses_final_breaker_refusal(monkeypatch, flag):
+    client = _legacy_client()
+    retry = client._transport._retry_handler
+    retry.config.max_attempts = 1
+    breaker = retry.circuit_breaker
+    assert breaker is not None
+    breaker.state = CircuitBreakerState.OPEN
+
+    def refuse_probe(_):
+        _flip(monkeypatch, flag)
+        return False
+
+    probe = Mock(side_effect=refuse_probe)
+    monkeypatch.setattr(breaker, "_should_attempt_reset", probe)
+    sender = Mock()
+    monkeypatch.setattr(client._transport, "_sender", sender)
+    try:
+        client.start_trace("one", trace_id="one")
+        client.end_trace("one")
+        result = client.flush()
+        probe.assert_called_once()
+        sender.assert_not_called()
+        assert result.success and result.failed_batches == 0
+        assert (result.items_sent, result.items_pending, result.items_suppressed) == (
+            0,
+            0,
+            1,
+        )
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("flag", (OPT_OUT, OFFLINE))
 def test_suppressed_items_are_counted_once(monkeypatch, flag):
     client = _legacy_client()
 
@@ -1909,9 +2064,7 @@ def test_suppressed_items_are_counted_once(monkeypatch, flag):
         _flip(monkeypatch, flag)
         return True
 
-    monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", validate
-    )
+    monkeypatch.setattr(optimization_only_egress, "_trace_egress_decision", validate)
     send = Mock()
     monkeypatch.setattr(client, "_open_http_request", send)
     try:
@@ -1929,7 +2082,7 @@ def test_suppressed_items_are_counted_once(monkeypatch, flag):
 
 def test_flags_unset_flush_result_contract(monkeypatch):
     monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", lambda *a, **k: True
+        optimization_only_egress, "_trace_egress_decision", lambda *a, **k: True
     )
     client = _legacy_client()
     monkeypatch.setattr(
@@ -1965,7 +2118,7 @@ def test_flags_unset_flush_result_contract(monkeypatch):
 @pytest.mark.parametrize("flag", FLAGS)
 def test_legacy_close_warning_after_delivery(monkeypatch, flag):
     monkeypatch.setattr(
-        optimization_only_egress, "ensure_trace_egress_allowed", lambda *a, **k: True
+        optimization_only_egress, "_trace_egress_decision", lambda *a, **k: True
     )
     client = _legacy_client()
     monkeypatch.setattr(
@@ -2082,9 +2235,15 @@ class _HttpHandoffs(ast.NodeVisitor):
         return f"{target}.{tail}" if tail else target
 
     def _is_session_instance(self, value):
-        return (
-            isinstance(value, ast.Call)
-            and self._resolve(value.func) in self._session_factories
+        if not isinstance(value, ast.Call):
+            return False
+        # Session wrappers can take the client by position or by keyword.
+        return self._resolve(value.func) in self._session_factories or any(
+            self._is_session_instance(argument)
+            for argument in (
+                *value.args,
+                *(keyword.value for keyword in value.keywords),
+            )
         )
 
     def _session_targets(self, value, targets):
@@ -2169,8 +2328,27 @@ def _http_handoffs(root):
             "from requests import Session as Open\nOpen().get('https://example.com')",
             "<module>/get",
         ),
+        (
+            "import requests\nconn = gate_session(requests.Session())\n"
+            "conn.get('https://example.com')",
+            "<module>/get",
+        ),
+        (
+            "from httpx import Client as Open\n"
+            "def fetch():\n    conn = wrap(gate_session(client=Open()))\n"
+            "    conn.get('https://example.com')",
+            "fetch/get",
+        ),
     ),
-    ids=("variable", "aliased-import", "instance-attribute", "inline", "inline-alias"),
+    ids=(
+        "variable",
+        "aliased-import",
+        "instance-attribute",
+        "inline",
+        "inline-alias",
+        "wrapped",
+        "nested-wrapper",
+    ),
 )
 def test_http_inventory_recognizes_session_instance(tmp_path, source, call):
     (tmp_path / "probe.py").write_text(source, encoding="utf-8")

@@ -2691,6 +2691,16 @@ def ensure_trace_egress_allowed(
     next call revalidates (and can block up to the deadline); calls inside the window are
     denied from the cache. A latch set later still wins on every call.
     """
+    return _trace_egress_decision(api_key, endpoint, headers=headers) is True
+
+
+def _trace_egress_decision(
+    api_key: str | None,
+    endpoint: Any,
+    *,
+    headers: Mapping[str, Any] | None = None,
+) -> bool | None:
+    """Return None when telemetry policy withheld key validation."""
     if not is_traigent_trace_endpoint(endpoint):
         return True
     if _env_denies():
@@ -2718,7 +2728,7 @@ def ensure_trace_egress_allowed(
 
     status = _await_trace_validation(entry)
     if status == "withheld":
-        return False
+        return None
     latched = _credential_latched(origins, key_text)
     allowed = status == "ok" and not latched
     definitive = allowed or status == "restricted" or latched
