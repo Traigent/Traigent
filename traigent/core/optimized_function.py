@@ -5896,7 +5896,12 @@ Remediation:
         return self._csm.best_config_snapshot
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
-        """Apply best configuration from optimization results.
+        """Apply best configuration from optimization results (developer shortcut).
+
+        Developer shortcut: no gate, no acceptance, not a release. It changes only
+        what THIS wrapper serves, in this process; it never moves an agent head and
+        no person has decided anything. To put a configuration in front of other
+        processes, a person accepts it and you call :meth:`release`.
 
         An explicit user call with the result in hand: it does not verify the stored
         identity (``config_id`` / ``function_ref`` / environment) of ``results``.
@@ -5913,6 +5918,158 @@ Remediation:
             return self._commit_best_config(results)
         finally:
             self._release_exclusive_slot()
+
+    def _release_client(self, project_id: str | None) -> Any:
+        from traigent.config.project import read_optional_project_env
+        from traigent.runtime.client import RuntimeClient
+        from traigent.runtime.release import ReleaseRefused
+
+        project = (project_id or read_optional_project_env() or "").strip()
+        if not project:
+            raise ReleaseRefused("project_required")
+        return RuntimeClient(project)
+
+    def _release_agent_ref(self, agent_ref: str | None) -> str:
+        from traigent.cloud.content_less import ContentLessRefusal, resolve_agent_ref
+        from traigent.runtime.release import ReleaseRefused
+
+        try:
+            options = self._content_less
+            if agent_ref is not None:
+                from traigent.cloud.content_less import ContentLessOptions
+
+                options = ContentLessOptions(agent_ref=agent_ref)
+            resolved = resolve_agent_ref(options)
+        except ContentLessRefusal:
+            raise ReleaseRefused("agent_ref_required") from None
+        if resolved is None:
+            raise ReleaseRefused("agent_ref_required")
+        return str(resolved)
+
+    def _release_environment(self, environment: str | None) -> str:
+        from traigent.cloud.content_less import (
+            ContentLessRefusal,
+            canonicalize_environment,
+        )
+        from traigent.runtime.release import ReleaseRefused
+
+        raw = environment or self._csm.best_config_environment
+        try:
+            return str(canonicalize_environment(raw))
+        except ContentLessRefusal:
+            raise ReleaseRefused("environment_required") from None
+
+    def release(
+        self,
+        *,
+        acceptance_id: str,
+        expected_head_generation: int | None = None,
+        agent_ref: str | None = None,
+        project_id: str | None = None,
+        environment: str | None = None,
+        agent_code_version: str | None = None,
+        configuration_space_digest: str | None = None,
+        gate_result_digest: str | None = None,
+    ) -> Any:
+        """Release a configuration a person has accepted: move the agent head.
+
+        A release needs a recorded human acceptance (``acceptance_id``, made in the
+        portal by a person). It is not :meth:`apply_best_config`, which is a developer
+        shortcut with no gate and no acceptance, and not the in-process apply that
+        ``optimize(apply=True)`` does by default; neither moves an agent head.
+
+        Args:
+            acceptance_id: Server-issued id of the person's acceptance.
+            expected_head_generation: The head generation the person saw. ``None``
+                reads the live head (needs ``environment``); the backend still
+                refuses unless it equals the generation the acceptance bound.
+            agent_ref: Opaque ``agentref_<32 hex>``; default ``TRAIGENT_AGENT_REF``.
+            project_id: Default ``TRAIGENT_PROJECT_ID``.
+            environment: Closed environment for the head read; default the
+                best-config environment of this function.
+            agent_code_version: Default: ``TRAIGENT_AGENT_CODE_VERSION``, else a
+                digest of the agent's module source. The backend accepts only
+                ``[A-Za-z0-9_-]``, so set a conforming value (the ``src:`` digest
+                contains ``:`` and is refused locally as ``invalid_request``).
+            configuration_space_digest: Default: sha256 of the canonical JSON of
+                this function's normalized configuration space.
+            gate_result_digest: Default ``"no_gate_run"``; pass the digest of the
+                promotion-gate result the person saw.
+
+        Returns:
+            A :class:`~traigent.runtime.release.ReleaseReceipt`.
+
+        Raises:
+            ~traigent.runtime.release.ReleaseRefused: with a closed ``code`` such as
+                ``acceptance_required``; the head is not moved.
+        """
+        from traigent.runtime import release as rel
+        from traigent.tuning.code_version import resolve_code_version
+        from traigent.tuning.errors import TuningError
+
+        ref = self._release_agent_ref(agent_ref)
+        client = self._release_client(project_id)
+        if expected_head_generation is None:
+            expected_head_generation = rel.read_head_generation(
+                client, ref, self._release_environment(environment)
+            )
+        if agent_code_version is None:
+            try:
+                agent_code_version = resolve_code_version(None, self)
+            except TuningError:
+                raise rel.ReleaseRefused("code_version_unavailable") from None
+        return rel.release_agent_head(
+            client,
+            ref,
+            acceptance_id=acceptance_id,
+            expected_head_generation=expected_head_generation,
+            agent_code_version=agent_code_version,
+            configuration_space_digest=(
+                configuration_space_digest
+                if configuration_space_digest is not None
+                else rel.configuration_space_digest(self.configuration_space)
+            ),
+            gate_result_digest=(
+                gate_result_digest
+                if gate_result_digest is not None
+                else rel.NO_GATE_RUN
+            ),
+        )
+
+    def rollback_release(
+        self,
+        *,
+        target_generation: int,
+        expected_head_generation: int,
+        agent_ref: str | None = None,
+        project_id: str | None = None,
+        environment: str | None = None,
+    ) -> Any:
+        """Undo a release: move the agent head back to an earlier generation.
+
+        A person may return to any earlier generation; an API key only to one that
+        was accepted or released (otherwise ``rollback_target_not_accepted``).
+
+        Requires a backend that has the rollback route
+        (``POST .../best-config-head/rollback``); that route is in review, not
+        merged. Against an older backend this raises ``reference_not_found``.
+
+        Returns:
+            A :class:`~traigent.runtime.release.ReleaseReceipt` with the new head
+            generation.
+
+        Raises:
+            ~traigent.runtime.release.ReleaseRefused: with a closed ``code``.
+        """
+        from traigent.runtime import release as rel
+
+        return rel.rollback_agent_head(
+            self._release_client(project_id),
+            self._release_agent_ref(agent_ref),
+            environment=self._release_environment(environment),
+            target_generation=target_generation,
+            expected_head_generation=expected_head_generation,
+        )
 
     def _commit_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply ``results`` to this wrapper without the advancing-run guard.

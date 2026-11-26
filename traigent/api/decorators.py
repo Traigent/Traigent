@@ -1286,7 +1286,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "auto_load_best": False,  # Auto-load best config on decoration
     "load_from": None,  # Explicit path to load config from
     "config_id": None,  # Stable best-config identifier
-    "best_config_source": "off",  # off|repo|cloud|repo_then_cloud|cloud_then_repo
+    "best_config_source": "off",  # off|repo|cloud|repo_then_cloud|cloud_then_repo|agent_head (the released head of TRAIGENT_AGENT_REF)
     "best_config_strict": False,  # Fail startup/refresh on invalid active source
     "best_config_cache_dir": None,  # Local cloud best-config cache
     "best_config_cache_ttl_seconds": 24 * 60 * 60,  # Fresh cache window

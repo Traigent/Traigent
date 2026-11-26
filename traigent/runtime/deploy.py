@@ -141,6 +141,13 @@ class DeployController:
     ) -> DeployOutcome:
         """Deploy the one promoted candidate of ``optimized`` under the approved grant.
 
+        This is the reactive path: it needs a declared reactive policy, a promoted
+        parent attempt and a grant a person approved, and it only runs against a
+        backend with the reactive routes enabled. A plain run has none of these; to
+        release a configuration a person accepted, use
+        ``OptimizedFunction.release(acceptance_id=...)``. Neither is
+        ``apply_best_config()``, which is a developer shortcut that moves no head.
+
         The hosted client can read attempts and grants (``ReactiveClient.list_attempts``,
         ``get_attempt`` and ``get_grant``), but this method does not look them up: the
         caller names the approved ``grant_ref`` and the server-issued

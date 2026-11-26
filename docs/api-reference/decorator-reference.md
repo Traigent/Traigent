@@ -516,6 +516,23 @@ from traigent.config.parallel import ParallelConfig
 - `reps_aggregation`: Repetition aggregation method. OSS SDK accepts only `"mean"`; non-default values raise `pydantic.ValidationError` and require Traigent Enterprise.
 - `evaluator`: external evaluator bundle for API-contract integrations. This does not change optimizer routing; it only changes how each trial is evaluated.
 
+#### `best_config_source`
+
+- **Type**: `str`
+- **Default**: `"off"`
+- **Values**: `off`, `repo`, `cloud`, `repo_then_cloud`, `cloud_then_repo`, `agent_head`
+- **Description**: Where the function reads its configuration at start. `agent_head`
+  loads exactly the version the agent's released head pins, with no fallback. The
+  agent comes from the `TRAIGENT_AGENT_REF` environment variable (an opaque
+  `agentref_<32 hex>` reference). A head moves only by a release: a person accepts a
+  configuration, then `OptimizedFunction.release(acceptance_id=...)` (or
+  `traigent release ACCEPTANCE_ID`) moves it. `traigent release rollback GENERATION`
+  undoes a release.
+
+> **Not a release**: `optimize(apply=True)` (the default) and
+> `apply_best_config()` apply a configuration inside this process only. They are a
+> developer shortcut: no gate, no acceptance, no head move.
+
 #### Removed: `mock` and `mock_mode_config`
 
 The inert `mock` (`MockModeOptions`) and `mock_mode_config` parameters were
