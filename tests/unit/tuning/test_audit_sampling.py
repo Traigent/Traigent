@@ -335,13 +335,53 @@ def test_padded_rate_via_monitor_and_verify():
         assert verify_sampling(c, KEY, ids, kept)
 
 
+def _both(rate):
+    RandomAudit(rate=rate)
+    CommittedSampler(rate, KEY, window_id="w")
+
+
+def _both_refuse(rate):
+    with pytest.raises(TuningError) as e1:
+        RandomAudit(rate=rate)
+    with pytest.raises(TuningError) as e2:
+        CommittedSampler(rate, KEY, window_id="w")
+    assert e1.value.code == E_INVALID_TUNING
+    assert e2.value.code == E_INVALID_TUNING
+    assert "64 significant digits" in str(e1.value)
+    assert "64 significant digits" in str(e2.value)
+
+
 @tvl_free
-def test_rate_with_more_than_4300_digits_constructs_and_round_trips():
-    long_rate = "0." + "1" * 4301
-    s = CommittedSampler(long_rate, KEY, window_id="w")
-    ids = [f"u{i}" for i in range(20)]
-    kept = [u for u in ids if s.keep(u)]
-    assert verify_sampling(s.commitment(), KEY, ids, kept) is True
+def test_huge_digit_rate_is_refused_quickly():
+    import time
+
+    start = time.perf_counter()
+    _both_refuse("0." + "1" * 400000)
+    assert time.perf_counter() - start < 1
+
+
+@tvl_free
+def test_rate_with_more_than_4300_digits_is_refused():
+    _both_refuse("0." + "1" * 4301)
+
+
+@tvl_free
+def test_rate_digit_limit_is_64_significant_digits():
+    _both("0." + "1" * 64)
+    _both_refuse("0." + "1" * 65)
+
+
+@tvl_free
+def test_trailing_zeros_do_not_count_toward_digit_limit():
+    _both("0.5" + "0" * 1000)
+
+
+@tvl_free
+@pytest.mark.parametrize("rate", ["1e-31", "1e-10000000"])
+def test_tiny_one_digit_rates_still_accepted(rate):
+    _both(rate)
+    s = CommittedSampler(rate, KEY, window_id="w")
+    assert s._threshold == 1
 
 
 @tvl_free

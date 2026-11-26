@@ -25,7 +25,7 @@ from decimal import Decimal
 from typing import Any
 
 from traigent.tuning.errors import E_INVALID_TUNING, TuningError
-from traigent.tuning.policy import _rate
+from traigent.tuning.policy import _rate, check_rate_digits
 
 SAMPLING_MODE = "hash_bernoulli_committed_v1"
 _MIN_KEY_BYTES = 32
@@ -69,6 +69,7 @@ def _open_rate(value: Any, field: str) -> tuple[Decimal, int]:
     rate: Decimal = _rate(value, field)
     if not Decimal(0) < rate < Decimal(1):
         raise TuningError(E_INVALID_TUNING, f"{field}: must be strictly within (0, 1)")
+    check_rate_digits(rate, field)
     rate = _strip_zeros(rate)
     threshold = _threshold(rate)
     if threshold >= 2**64:
