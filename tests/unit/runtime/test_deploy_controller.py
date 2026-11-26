@@ -284,17 +284,18 @@ def _route_publish_and_finalize(reactive: Reactive, answers: list[Any]) -> list[
     real = reactive.client._transport
     seen: list[str] = []
 
-    def scripted(method: str, path: str, params: Any, body: Any, *rest: Any) -> Any:
+    def scripted(method: str, path: str, params: Any, body: Any, **rest: Any) -> Any:
         if "/publish-results/" in path:
             seen.append(path.rsplit("/", 1)[-1])
             answer = answers.pop(0)
             if isinstance(answer, Exception):
                 raise answer
             return answer
-        return real(method, path, params, body)
+        return real(method, path, params, body, **rest)
 
+    scripted.accepts_headers = True  # type: ignore[attr-defined]
     reactive.client._transport = scripted
-    reactive.client._headers_mode = "positional"
+    reactive.client._pass_headers = True
     return seen
 
 

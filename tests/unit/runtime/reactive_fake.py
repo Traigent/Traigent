@@ -441,6 +441,8 @@ class StrictBackend:
             raise DroppedResponse("response lost after commit")
         return self._answer(entry, route, status, payload)
 
+    transport.accepts_headers = True  # type: ignore[attr-defined]
+
     def _answer(
         self,
         entry: dict[str, Any],

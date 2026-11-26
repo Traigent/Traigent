@@ -23,7 +23,6 @@ there).  Two rules shape this module:
 
 from __future__ import annotations
 
-import inspect
 import re
 import secrets
 from collections.abc import Callable, Mapping, Sequence
@@ -823,22 +822,25 @@ class ReactiveClient:
                 path: str,
                 params: Mapping[str, Any] | None,
                 body: Mapping[str, Any] | None,
-                extra_headers: Mapping[str, str] | None = None,
+                headers: Mapping[str, str] | None = None,
             ) -> tuple[int, Any, Mapping[str, str]]:
-                status, parsed, headers = http.send(
+                status, parsed, response_headers = http.send(
                     method,
                     f"{http.origin}{path}",
                     dict(body) if body is not None else None,
                     params=dict(params) if params else None,
-                    extra_headers=dict(extra_headers) if extra_headers else None,
+                    extra_headers=dict(headers) if headers else None,
                 )
-                return status, parsed, headers
+                return status, parsed, response_headers
 
+            _default.accepts_headers = True  # type: ignore[attr-defined]
             transport = _default
         self._transport: Transport = transport
-        # A custom transport owns its transport: only one that can take the headers
-        # gets them, so a legacy 4-argument transport is called exactly as before.
-        self._headers_mode = _headers_mode(transport)
+        # The SDK's own default transport always gets the request headers.  A custom
+        # transport gets them (as ``headers=``) only if it opts in with a truthy
+        # ``accepts_headers`` attribute; any other is called with four arguments and
+        # carries no project header.
+        self._pass_headers = getattr(transport, "accepts_headers", False) is True
 
     # -- plumbing ---------------------------------------------------------------------------
     def _path(self, tail: str) -> str:
@@ -894,14 +896,9 @@ class ReactiveClient:
         request_headers: Mapping[str, str] | None = None,
     ) -> Any:
         try:
-            # Only a head or publish call that has a project carries request headers;
-            # the transport then gets a fifth argument.  Without one it is called with
-            # four arguments exactly as before, so existing transports keep working.
-            if request_headers and self._headers_mode == "positional":
-                status, parsed, headers = self._transport(  # type: ignore[call-arg]
-                    method, path, params, body, request_headers
-                )
-            elif request_headers and self._headers_mode == "keyword":
+            # Only an opted-in transport (the default one always is) gets the headers,
+            # as ``headers=``; every other transport is called with four arguments.
+            if request_headers and self._pass_headers:
                 status, parsed, headers = self._transport(  # type: ignore[call-arg]
                     method, path, params, body, headers=request_headers
                 )
@@ -1460,34 +1457,6 @@ class ReactiveClient:
             doc["pinned_version"],
             doc["decided_at"],
         )
-
-
-def _headers_mode(transport: Callable[..., Any]) -> str | None:
-    """How ``transport`` takes request headers: ``"positional"``, ``"keyword"`` or ``None``."""
-    try:
-        parameters = list(
-            inspect.signature(transport, follow_wrapped=False).parameters.values()
-        )
-    except (TypeError, ValueError):
-        return None
-    positional = 0
-    keyword = False
-    for parameter in parameters:
-        kind = parameter.kind
-        if kind is inspect.Parameter.VAR_POSITIONAL:
-            return "positional"
-        if kind in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ):
-            positional += 1
-        if kind is inspect.Parameter.VAR_KEYWORD or (
-            kind is inspect.Parameter.KEYWORD_ONLY and parameter.name == "headers"
-        ):
-            keyword = True
-    if positional >= 5:
-        return "positional"
-    return "keyword" if keyword else None
 
 
 def _closed(fact: Mapping[str, Any], allowed: set[str], field: str) -> None:

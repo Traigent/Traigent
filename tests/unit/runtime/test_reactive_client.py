@@ -925,6 +925,8 @@ def test_the_project_pattern_is_the_vendored_contract_pattern() -> None:
 
 
 class _HeadRecorder:
+    accepts_headers = True
+
     def __init__(self, status: int = 200, body: Any = None) -> None:
         self.calls: list[tuple[str, str, Any]] = []
         self.status, self.body = status, body
@@ -1124,20 +1126,20 @@ def test_four_argument_transport_works_when_a_project_is_configured() -> None:
     assert len(seen) == 1
 
 
-def test_functools_wrapped_four_argument_transport_gets_the_project_header() -> None:
+def test_wrapped_four_argument_transport_not_opted_in_is_called_with_four_args() -> (
+    None
+):
     from traigent.runtime.hosted import TokenMap
 
     def inner(method: str, path: str, params: Any, body: Any) -> Any:
         return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
 
-    seen_headers: list[Any] = []
+    seen: list[tuple[Any, ...]] = []
 
     @functools.wraps(inner)
-    def wrapper(
-        method: str, url: str, body: Any, token: Any, headers: Any = None
-    ) -> Any:
-        seen_headers.append(headers)
-        return inner(method, url, body, token)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        seen.append((args, kwargs))
+        return inner(*args, **kwargs)
 
     client = ReactiveClient(
         DIGEST,
@@ -1146,24 +1148,57 @@ def test_functools_wrapped_four_argument_transport_gets_the_project_header() -> 
         transport=wrapper,
     )
     assert client.get_pinned_config().generation == 1
-    assert len(seen_headers) == 1
-    assert seen_headers[0] is not None
-    assert seen_headers[0].get("X-Project-Id") == REACTIVE_PROJECT
+    assert len(seen) == 1
+    assert len(seen[0][0]) == 4
+    assert seen[0][1] == {}
 
 
-def test_keyword_headers_transport_gets_the_header_by_keyword() -> None:
+def test_opted_in_transport_gets_the_header_by_keyword() -> None:
     from traigent.runtime.hosted import TokenMap
 
     got: list[Any] = []
 
-    def kw(method: str, path: str, params: Any, body: Any, **extra: Any) -> Any:
-        got.append(extra)
+    def opted(
+        method: str, path: str, params: Any, body: Any, headers: Any = None
+    ) -> Any:
+        got.append(headers)
         return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
 
+    opted.accepts_headers = True  # type: ignore[attr-defined]
     ReactiveClient(
         DIGEST,
         TokenMap(Path("/nonexistent-token-state")),
         project_id=REACTIVE_PROJECT,
-        transport=kw,
+        transport=opted,
     ).get_pinned_config()
-    assert got == [{"headers": {"X-Project-Id": REACTIVE_PROJECT}}]
+    assert got == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+def test_default_transport_sends_the_project_header(monkeypatch: Any) -> None:
+    from traigent.runtime import hosted
+    from traigent.runtime.hosted import TokenMap
+
+    sent: list[Any] = []
+
+    class _FakeHttp:
+        origin = "https://example.invalid"
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def send(self, method: str, url: str, body: Any, **kw: Any) -> Any:
+            sent.append(kw.get("extra_headers"))
+            return (
+                200,
+                {"schema_version": 1, "generation": 1, "version": 1, "spec": {}},
+                {},
+            )
+
+    monkeypatch.setattr(hosted, "RuntimeClient", _FakeHttp)
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+    )
+    assert client.get_pinned_config().generation == 1
+    assert sent == [{"X-Project-Id": REACTIVE_PROJECT}]
