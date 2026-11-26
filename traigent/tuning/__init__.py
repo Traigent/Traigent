@@ -5,6 +5,13 @@
 with ``E_TVL_VALIDATOR_UNAVAILABLE``.
 """
 
+from traigent.tuning.audit_sampling import (
+    CommittedSampler,
+    LocalAuditQueue,
+    SamplingCommitment,
+    sampler_from_monitor,
+)
+from traigent.tuning.audit_sampling import verify as verify_sampling
 from traigent.tuning.authority import (
     ApproverAuthority,
     load_authority,
@@ -50,6 +57,9 @@ from traigent.tuning.validator import (
 __all__ = [
     "AcceptanceOutcome",
     "ApproverAuthority",
+    "CommittedSampler",
+    "LocalAuditQueue",
+    "SamplingCommitment",
     "Controller",
     "Diagnostic",
     "E_FLOAT_RATE",
@@ -74,6 +84,8 @@ __all__ = [
     "TvlValidationFailed",
     "ValidatorUnavailable",
     "attach_tuning",
+    "sampler_from_monitor",
+    "verify_sampling",
     "conditions_trace",
     "derive_module_context",
     "load_authority",

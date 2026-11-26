@@ -112,6 +112,10 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 The module context (tvars, objectives, evaluation set, environment) comes from the
 `@traigent.optimize` function. For tests pass `Tuning(..., module_context={...})`.
 
+### Executing the audit sampling locally
+
+The SDK executes the `hash_bernoulli_committed_v1` sampling a `RandomAudit` declares, on your machine. `sampler_from_monitor(monitor, window_id=...)` returns a `CommittedSampler` (or `None` when the monitor declares no sampling, i.e. a census). Publish `sampler.commitment()` (mode, window id, rate, SHA-256 of the secret key) before the window starts, call `sampler.keep(unit_id)` per unit, and queue kept units with `LocalAuditQueue(dir).append(unit_id, record, window_id=...)` (local JSON lines, 0700 dir, 0600 files; nothing is sent anywhere). After the window, `sampler.reveal()` gives the key and `verify_sampling(commitment, key, decisions)` re-checks every decision. The choice depends only on the key, window id and unit id, never on an outcome.
+
 ## The human decision this controller takes
 
 The local loop asks a person once, and `traigent tune status` (or `status --text`) shows what
