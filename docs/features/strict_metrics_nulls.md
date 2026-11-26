@@ -2,11 +2,11 @@
 
 ## Overview
 
-The `TRAIGENT_STRICT_METRICS_NULLS` feature flag controls how Traigent handles missing or invalid metrics. When enabled, it returns `null` (None in Python) for missing values instead of defaulting to `0.0`, preventing misleading calculations and preserving data integrity.
+The `TRAIGENT_STRICT_METRICS_NULLS` feature flag controls how Traigent handles missing or invalid metrics. When enabled, it returns `null` (None in Python) for missing values instead of defaulting to `0.0`, preventing misleading calculations and preserving data integrity. On local trials, an unmeasured `cost` is the exception: it is left out in both modes.
 
 ## Motivation
 
-Previously, Traigent defaulted all missing metrics to `0.0`, which could lead to:
+Previously, Traigent defaulted missing metrics to `0.0`, which could lead to:
 - **Misleading averages**: Missing data counted as zero skewed calculations
 - **False precision**: Showing `0.0` implied measurement when none existed
 - **Incorrect aggregations**: Sum/average operations included non-existent data
@@ -42,10 +42,8 @@ export TRAIGENT_STRICT_METRICS_NULLS=false
     "accuracy": 0.0,
     "score": 0.0,
     "duration": 0.0,
-    "input_tokens": 0.0,
-    "output_tokens": 0.0,
-    "total_tokens": 0.0,
-    "response_time_ms": 0.0
+    "response_time_ms": 0.0,
+    "cost_unmeasured": 1.0
   }
 }
 ```
@@ -57,17 +55,15 @@ export TRAIGENT_STRICT_METRICS_NULLS=false
     "accuracy": 0.0,
     "score": 0.0,
     "duration": null,
-    "input_tokens": null,
-    "output_tokens": null,
-    "total_tokens": null,
-    "response_time_ms": null
+    "response_time_ms": null,
+    "cost_unmeasured": 1.0
   }
 }
 ```
 
 Note: `accuracy` and `score` remain `0.0` as they represent actual measured values, not missing data.
 
-An unmeasured `cost` (an unpriced model, or no captured usage) is not reported as `null`. The `cost` key is left out of the trial metrics in both modes, so `metrics.get("cost")` returns `None`.
+The examples show a trial whose cost could not be measured (an unpriced model, or no captured usage). On a local trial the `cost` key is left out in both modes and `cost_unmeasured` is `1.0`, so `metrics.get("cost")` returns `None`. Token fields are not shown: they can be replaced by labelled estimates.
 
 ## Affected Components
 
@@ -77,9 +73,7 @@ An unmeasured `cost` (an unpriced model, or no captured usage) is not reported a
 
 ### Metrics Tracking
 - **`MetricsTracker`** in `traigent/evaluators/metrics_tracker.py`
-  - `_empty_backend_format()`: Returns `None` for missing metrics
-  - `_empty_aggregated_metrics()`: Returns `None` for aggregated statistics
-  - `safe_get()` helper: Returns `None` instead of default value
+  - Returns `None` for missing metrics and aggregated statistics
 
 ### Evaluators
 - **`BaseEvaluator`** in `traigent/evaluators/base.py`
@@ -107,7 +101,7 @@ export TRAIGENT_STRICT_METRICS_NULLS=true
 
 2. **Update code that expects numeric values**:
    ```python
-   # Before (assumes numeric)
+   # Before (assumes the key exists; raises KeyError when cost is left out)
    if metrics["cost"] > 0:
        process_cost(metrics["cost"])
 
@@ -152,12 +146,13 @@ The test suite covers:
 1. **Always check for None** before numeric operations:
    ```python
    if value is not None and value > threshold:
-       # Process value
+       process(value)
    ```
 
-2. **Use default values explicitly** when needed:
+2. **Keep unknown distinct from zero** when you display a value:
    ```python
-   cost = metrics.get("cost") or 0.0  # Explicit default
+   cost = metrics.get("cost")  # None when cost is unmeasured
+   label = "unknown" if cost is None else f"${cost:.4f}"
    ```
 
 3. **Filter None values** in aggregations:
@@ -174,19 +169,20 @@ The test suite covers:
        Process metrics dictionary.
 
        Note: With TRAIGENT_STRICT_METRICS_NULLS=true,
-       missing metrics will be None instead of 0.0
+       missing metrics will be None instead of 0.0 (an unmeasured
+       local cost is left out instead)
        """
    ```
 
 ## Backward Compatibility
 
-The feature is **disabled by default** to maintain backward compatibility. Existing code will continue to work unchanged, receiving `0.0` for missing values as before.
+The feature is **disabled by default** to maintain backward compatibility. Existing code will continue to work unchanged, receiving `0.0` for most missing values as before. An unmeasured local `cost` is left out in both modes.
 
 To ensure your code works with both modes:
 ```python
 def handle_metric(value):
-    # Works with both 0.0 and None
-    if not value:  # Covers both 0.0 and None
+    # A measured 0.0 is a value; only None means no data
+    if value is None:
         return "No data"
     return f"Value: {value}"
 ```
@@ -205,6 +201,7 @@ Minimal performance impact:
 **Solution**: Add None checks before comparisons:
 ```python
 if value is not None and value > 0:
+    process(value)
 ```
 
 ### JSON serialization issues

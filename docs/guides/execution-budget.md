@@ -1,6 +1,6 @@
 # Execution Budget Guide (Experimental)
 
-> **Status: experimental (issue #1980).** `ExecutionBudget` is the SDK's first
+> **Status: experimental.** `ExecutionBudget` is the SDK's first
 > cross-call budgeting seam. The API may change in a future minor version — pin
 > your version if you depend on it in production.
 
@@ -156,7 +156,9 @@ each reservation in its provider door.
 
 Actual-cost `max_cost_usd`, explicit `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`,
 strict tracking, and cost-objective refusals remain independent and unchanged.
-An explicit actual-cost cap still refuses unknown actual cost. Do not mirror a
+An explicit `cost_limit` / `TRAIGENT_RUN_COST_LIMIT` still refuses a completed
+trial with unknown cost, even when the run is explicitly sized; the shared
+budget records such a trial as untracked (see below). Do not mirror a
 nominal allowance into an actual-cost cap or clear a caller-supplied cost cap to
 make an unpriced run proceed.
 
@@ -231,7 +233,8 @@ Unwrapped, the same function reports cost as unmeasured and a strict run
     guarantee it cannot honor.
 
   `enforce_untracked_cost=True` **fails closed mid-run only for trials that report
-  no cost** (`cost is None`, e.g. a raw-provider trial with no usage data): the next
+  no cost** (`cost is None`, e.g. a raw-provider trial with no usage data) **or are
+  flagged `cost_unmeasured`** (such a trial is charged its known floor): the next
   admission after such a trial stops with `stop_reason == "execution_budget"`. A
   model that is merely *unpriced* but reports a concrete `$0` is **not** caught
   mid-run — that debit is indistinguishable from a genuinely free `$0` trial. The

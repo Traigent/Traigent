@@ -3,7 +3,8 @@
 Traigent charges each trial for the LLM calls its examples make. It reads the
 provider's reported usage (prompt and completion tokens), prices it, and
 records `input_tokens`, `output_tokens`, `total_tokens`, `input_cost`,
-`output_cost` and `total_cost` on every example and trial.
+`output_cost` and `total_cost` on each example and trial where usage is
+reported and the model is priced.
 
 This page lists which calls are captured, how to price a model Traigent does
 not know, and what a trial reports when nothing was captured.
@@ -17,7 +18,7 @@ not know, and what a trial reports when nothing was captured.
 | Traigent's `BedrockChatClient` | always | |
 | Raw OpenAI SDK, sync and async: `chat.completions.create`, `chat.completions.parse` (also `beta.chat.completions.parse`), `completions.create`, `responses.create`, `responses.parse`, and the `with_raw_response` form of each | the OpenAI override is active (see below) | non-streaming calls that return `usage`. Responses API `input_tokens`/`output_tokens` are counted as prompt/completion tokens. Your code still receives the normal return value; a `with_raw_response` result is parsed once and the parsed object is cached, so your own `.parse()` returns it |
 | Raw Anthropic SDK, sync and async: `messages.create`, and `messages.stream` (usage is read from the final message when the `with` block exits) | the Anthropic override is active (`framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` or `override_anthropic()`) | `usage.input_tokens`/`output_tokens` ([#3250](https://github.com/Traigent/Traigent/issues/3250)). `create(stream=True)` and a `messages.stream` abandoned before its final event report no usage and stay unmeasured, never estimated from text length. Cache read/write tokens, which Anthropic reports beside `input_tokens`, are not priced separately yet (same as `ChatAnthropic`), so a prompt-cached call's cost is a lower bound |
-| Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. A trial can show a cost of 0.0, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
+| Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. Its cost is not measured, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
 
@@ -90,12 +91,12 @@ depends on `TRAIGENT_STRICT_COST_ACCOUNTING`:
 - `true`: an unpriced model raises.
 - unset: a run whose objectives include `cost` is strict at runtime, so it
   stops at the first call that has neither a table price nor a
-  provider-reported cost. A run without a `cost` objective records the call at
-  `$0` and the result carries an `UNPRICED_MODEL_RUNTIME` warning.
-- `false`: explicit opt-out. The call is recorded at `$0` with the same
-  warning. The trial is flagged `cost_unpriced`, and a flagged trial is left
-  out of cost ranking (best config, Pareto front, weighted scores), so a
-  placeholder `$0` never wins as "cheapest".
+  provider-reported cost. A run without a `cost` objective continues and the
+  result carries an `UNPRICED_MODEL_RUNTIME` warning.
+- `false`: explicit opt-out. The run continues with the same warning. The
+  trial is flagged `cost_unpriced`, and a flagged trial is left out of cost
+  ranking (best config, Pareto front, weighted scores), so a placeholder cost
+  does not win as "cheapest".
 
 Give the alias a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` (inline) or
 `TRAIGENT_CUSTOM_MODEL_PRICING_FILE` (path to the same JSON). Prices are USD
@@ -140,23 +141,28 @@ instead of being reported as `0`.
 When only some examples were measured, the totals cover those examples and a
 warning names the coverage.
 
-The same holds for a `cost` objective: a trial with no measured example has
-no `cost` key in its metrics (in both modes), so `get_metric("cost")` is `None`; `cost_unmeasured` is
+The same holds for a `cost` objective. A local trial with no measured example
+has no `cost` key in its metrics, with strict nulls on or off, so
+`get_metric("cost")` is `None`. A custom evaluator with capture enabled and
+`TRAIGENT_STRICT_METRICS_NULLS=true` has `cost` present as `None`; with strict
+nulls off the key is left out. `cost_unmeasured` is
 `1.0` on a trial where any example had no measured cost, and token counts
 estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
-table shows the cost as `unmeasured`. Weighted `best_config` selection counts a
-missing cost as the worst cost, the Pareto front leaves out a trial that is
+table shows the cost as `unmeasured`. When a cost objective drives ranking, `best_config` selection leaves out a
+trial flagged unmeasured. The Pareto front leaves out a trial that is
 missing a configured objective, and the batch composite score gives such a
 trial the failed-trial score instead of scoring it on quality alone. A
-constraint written as `metrics.get("cost", 0) <= limit` still accepts unmeasured
-trials ([#2446](https://github.com/Traigent/Traigent/issues/2446), item 3);
-write `metrics.get("cost") is not None and metrics["cost"] <= limit` instead.
+constraint written as `metrics.get("cost", 0) <= limit` accepts a trial whose
+`cost` key is left out, and raises `TypeError` when the value is `None`. Write
+`cost = metrics.get("cost")` and test `cost is not None and cost <= limit`
+instead.
 Workflow spans for an unmeasured trial, and for a failed or pruned trial that
 recorded no cost, send the known spend as `cost_usd` (`0.0` when none was
 reported) together with the metadata flag `traigent.cost_unmeasured: true`; the
 flag, not the number, says the cost is not a measurement. Run summaries
-(`get_summary()`, `experiment_stats`) withhold `total_cost` and report `cost_unmeasured_trials`
-and `cost_lower_bound` when any trial's cost is unmeasured.
+(`get_summary()`, `experiment_stats`) set `total_cost` to `None` and report
+`cost_unmeasured_trials` and `cost_lower_bound` when any trial's cost is
+unmeasured. `cost_lower_bound` is `None` when there is no positive known spend.
 
 A run that stops before the grid is exhausted records why in
 `result.metadata["stop_detail"]` and prints it under the results table: the SDK
@@ -174,8 +180,13 @@ total rather than failing the run. Two run-level warnings say what happened:
 
 The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
 `TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
-When any trial reports no cost, what happens depends on whether you sized the
-run yourself.
+When any trial reports no cost, what happens depends on whether the limit is
+explicit and whether you sized the run yourself.
+
+**You set `cost_limit` or `TRAIGENT_RUN_COST_LIMIT` explicitly.** Once a
+non-failed trial completes with no reported cost, the run is refused with an
+error, even if you also set `max_trials` or `max_total_examples`. The
+fallbacks below apply only to the inherited default limit.
 
 **You did not set `max_trials` or `max_total_examples`.** Traigent is
 conservative: the run stops at a default safety limit of 10 trials
@@ -205,7 +216,7 @@ To continue after the safety stop, either:
    gateway that omits `usage`, a streaming call, or an uncaptured client. A
    fully measured run is bounded by its cost budget instead of the trial limit,
    so raise `cost_limit` if the budget is what stops you.
-2. **Size the run yourself.** Set `max_trials` explicitly to run more trials,
+2. **Size the run yourself** (default limit only). Set `max_trials` explicitly to run more trials,
    for example `func.optimize_sync(max_trials=50)`. `max_total_examples` caps
    total examples and also counts as your explicit consent, but does not raise
    the default `max_trials` of 10. Traigent cannot tell you what the unmeasured
