@@ -1102,3 +1102,40 @@ def test_head_call_maps_both_project_context_codes(code: str, monkeypatch: Any) 
     with pytest.raises(ProjectContextRequiredError):
         _head_client(rec).get_pinned_config()
     assert len(rec.calls) == 1
+
+
+def test_four_argument_transport_works_when_a_project_is_configured() -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    seen: list[tuple[Any, ...]] = []
+
+    def four_arg(method: str, path: str, params: Any, body: Any) -> Any:
+        seen.append((method, path))
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=four_arg,
+    )
+    assert client.get_pinned_config().generation == 1  # no header, no TypeError
+    assert len(seen) == 1
+
+
+def test_keyword_headers_transport_gets_the_header_by_keyword() -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    got: list[Any] = []
+
+    def kw(method: str, path: str, params: Any, body: Any, **extra: Any) -> Any:
+        got.append(extra)
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=kw,
+    ).get_pinned_config()
+    assert got == [{"headers": {"X-Project-Id": REACTIVE_PROJECT}}]

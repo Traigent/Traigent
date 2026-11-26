@@ -23,6 +23,7 @@ there).  Two rules shape this module:
 
 from __future__ import annotations
 
+import inspect
 import re
 import secrets
 from collections.abc import Callable, Mapping, Sequence
@@ -835,6 +836,9 @@ class ReactiveClient:
 
             transport = _default
         self._transport: Transport = transport
+        # A custom transport owns its transport: only one that can take the headers
+        # gets them, so a legacy 4-argument transport is called exactly as before.
+        self._headers_mode = _headers_mode(transport)
 
     # -- plumbing ---------------------------------------------------------------------------
     def _path(self, tail: str) -> str:
@@ -857,6 +861,10 @@ class ReactiveClient:
         project = quote(project_id, safe="")
         agent = quote(self.agent_id, safe="")
         return f"{REACTIVE_PREFIX}/{project}/agents/{agent}/{REACTIVE_SEGMENT}{tail}"
+
+    def require_head_project(self) -> None:
+        """Refuse an invalid explicit project now, before any request or state change."""
+        self._head_headers()
 
     def _head_path(self, tail: str) -> str:
         # Best-config head and publish routes stay on the release-family digest.
@@ -889,11 +897,16 @@ class ReactiveClient:
             # Only a head or publish call that has a project carries request headers;
             # the transport then gets a fifth argument.  Without one it is called with
             # four arguments exactly as before, so existing transports keep working.
-            status, parsed, headers = (
-                self._transport(method, path, params, body, request_headers)  # type: ignore[call-arg]
-                if request_headers
-                else self._transport(method, path, params, body)
-            )
+            if request_headers and self._headers_mode == "positional":
+                status, parsed, headers = self._transport(  # type: ignore[call-arg]
+                    method, path, params, body, request_headers
+                )
+            elif request_headers and self._headers_mode == "keyword":
+                status, parsed, headers = self._transport(  # type: ignore[call-arg]
+                    method, path, params, body, headers=request_headers
+                )
+            else:
+                status, parsed, headers = self._transport(method, path, params, body)
         except ReactiveError:
             raise
         except RuntimeRequirementError as exc:
@@ -1447,6 +1460,32 @@ class ReactiveClient:
             doc["pinned_version"],
             doc["decided_at"],
         )
+
+
+def _headers_mode(transport: Callable[..., Any]) -> str | None:
+    """How ``transport`` takes request headers: ``"positional"``, ``"keyword"`` or ``None``."""
+    try:
+        parameters = list(inspect.signature(transport).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    positional = 0
+    keyword = False
+    for parameter in parameters:
+        kind = parameter.kind
+        if kind is inspect.Parameter.VAR_POSITIONAL:
+            return "positional"
+        if kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional += 1
+        if kind is inspect.Parameter.VAR_KEYWORD or (
+            kind is inspect.Parameter.KEYWORD_ONLY and parameter.name == "headers"
+        ):
+            keyword = True
+    if positional >= 5:
+        return "positional"
+    return "keyword" if keyword else None
 
 
 def _closed(fact: Mapping[str, Any], allowed: set[str], field: str) -> None:

@@ -19,7 +19,7 @@ from traigent.runtime.deploy import (
 from traigent.runtime.hosted import ReactiveError, deploy_key
 from traigent.runtime.model import RuntimeRequirementError
 
-from .conftest import CANARY, Reactive
+from .conftest import CANARY, REACTIVE_PROJECT, Reactive
 from .reactive_fake import canonical_digest
 
 GATE = "d" * 64
@@ -277,3 +277,77 @@ def test_only_the_publication_carries_content_and_the_canary_never_travels(
         assert CANARY not in json.dumps(sent)
         # no route carries the configuration: the publish names a server-issued version
         assert not (isinstance(sent["body"], dict) and "spec" in sent["body"])
+
+
+def _route_publish_and_finalize(reactive: Reactive, answers: list[Any]) -> list[str]:
+    """Replace the transport: publish/finalize calls get the scripted ``answers`` in turn."""
+    real = reactive.client._transport
+    seen: list[str] = []
+
+    def scripted(method: str, path: str, params: Any, body: Any, *rest: Any) -> Any:
+        if "/publish-results/" in path:
+            seen.append(path.rsplit("/", 1)[-1])
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        return real(method, path, params, body)
+
+    reactive.client._transport = scripted
+    reactive.client._headers_mode = "positional"
+    return seen
+
+
+_PCR = (422, {"success": False, "error_code": "PROJECT_CONTEXT_REQUIRED"}, {})
+
+
+def test_an_invalid_explicit_project_fails_before_any_reactive_write(
+    reactive: Reactive,
+) -> None:
+    ref = approved_deploy(reactive)
+    before = len(reactive.backend.log)
+    reactive.client.project_id = "project\r\n"
+    with pytest.raises(RuntimeRequirementError) as err:
+        deploy(reactive, ref)
+    assert err.value.path == "project_id"
+    assert len(reactive.backend.log) == before  # no reserve, no start
+    # nothing was marked started: a corrected rerun is not blocked
+    reactive.client.project_id = REACTIVE_PROJECT
+    assert deploy(reactive, ref).state == DEPLOYED
+
+
+def test_a_project_refusal_on_the_first_publish_propagates_with_its_guidance(
+    reactive: Reactive,
+) -> None:
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    ref = approved_deploy(reactive)
+    _route_publish_and_finalize(reactive, [_PCR])
+    with pytest.raises(ProjectContextRequiredError) as err:
+        deploy(reactive, ref)
+    assert "TRAIGENT_PROJECT_ID" in str(err.value)
+
+
+def test_ambiguous_publish_then_retry_422_keeps_the_unresolved_signal(
+    reactive: Reactive,
+) -> None:
+    ref = approved_deploy(reactive)
+    failure = RuntimeRequirementError("backend_error", "transport")
+    _route_publish_and_finalize(reactive, [failure, _PCR])
+    with pytest.raises(DeployHold) as err:
+        deploy(reactive, ref)
+    assert err.value.ambiguous is True
+    assert "TRAIGENT_PROJECT_ID" in str(err.value)
+
+
+def test_ambiguous_publish_then_finalize_422_keeps_the_unresolved_signal(
+    reactive: Reactive,
+) -> None:
+    ref = approved_deploy(reactive)
+    failure = RuntimeRequirementError("backend_error", "transport")
+    seen = _route_publish_and_finalize(reactive, [failure, _PCR])
+    with pytest.raises(DeployHold) as err:
+        deploy(reactive, ref, max_attempts=1)  # retries exhausted: finalize decides
+    assert err.value.ambiguous is True
+    assert "TRAIGENT_PROJECT_ID" in str(err.value)
+    assert seen[-1] == "finalize"
