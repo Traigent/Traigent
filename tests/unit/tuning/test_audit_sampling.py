@@ -156,6 +156,38 @@ def test_sampler_rate_must_be_strictly_inside(rate):
 
 
 @tvl_free
+@pytest.mark.parametrize(
+    "rate",
+    ["0.99999999999999999999", Decimal("0.99999999999999999999")],
+)
+def test_sampler_rate_too_close_to_one_refused(rate):
+    with pytest.raises(TuningError) as exc:
+        CommittedSampler(rate, KEY, window_id="w")
+    assert exc.value.code == E_INVALID_TUNING
+
+
+@tvl_free
+def test_sampler_from_monitor_rate_too_close_to_one_refused():
+    m = {
+        "evidence": {
+            "sampling": {
+                "mode": "hash_bernoulli_committed_v1",
+                "rate": "0.99999999999999999999",
+            }
+        }
+    }
+    with pytest.raises(TuningError) as exc:
+        sampler_from_monitor(m, window_id="w", key=KEY)
+    assert exc.value.code == E_INVALID_TUNING
+
+
+@tvl_free
+def test_sampler_rate_just_below_one_still_works():
+    s = CommittedSampler("0.999999", KEY, window_id="w")
+    assert s.commitment().rate == "0.999999"
+
+
+@tvl_free
 def test_window_id_required_and_valid():
     with pytest.raises(TypeError):
         CommittedSampler("0.5", KEY)  # type: ignore[call-arg]

@@ -46,6 +46,13 @@ def _open_rate(value: Any, field: str) -> Decimal:
     rate: Decimal = _rate(value, field)
     if not Decimal(0) < rate < Decimal(1):
         raise TuningError(E_INVALID_TUNING, f"{field}: must be strictly within (0, 1)")
+    numerator, denominator = rate.as_integer_ratio()
+    if (2**64 - 1) * denominator < numerator * 2**64:
+        raise TuningError(
+            E_INVALID_TUNING,
+            f"{field}: rate is too close to 1 for a 64-bit draw "
+            "(even the largest hash would be kept)",
+        )
     return rate
 
 
