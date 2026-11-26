@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from traigent.config.project import read_optional_project_env
+from traigent.config.project import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    is_project_context_required,
+    project_header_for,
+    read_optional_project_env,
+)
 from traigent.config.tenant import read_optional_env
 from traigent.runtime import manifest
 from traigent.runtime.client import RuntimeClient
@@ -177,6 +182,14 @@ class ReactiveError(RuntimeRequirementError):
 
 
 # --- tiny strict validators -----------------------------------------------------------------
+
+
+class ProjectContextRequiredError(ReactiveError):
+    """The backend refused a flat head or publish call for want of a project (never retried)."""
+
+    def __init__(self, *, status: int | None = None) -> None:
+        super().__init__("project_context_required", "project_id", status=status)
+        Exception.__init__(self, PROJECT_CONTEXT_REQUIRED_MESSAGE)
 
 
 class ReactiveNotFoundError(ReactiveError):
@@ -794,6 +807,7 @@ class ReactiveClient:
         self.agent_id: Any = (
             read_optional_env(REACTIVE_AGENT_ID_ENV) if agent_id is None else agent_id
         )
+        self._project_given = project_id is not None
         self.project_id: Any = (
             (read_optional_project_env() or "") if project_id is None else project_id
         )
@@ -808,12 +822,14 @@ class ReactiveClient:
                 path: str,
                 params: Mapping[str, Any] | None,
                 body: Mapping[str, Any] | None,
+                extra_headers: Mapping[str, str] | None = None,
             ) -> tuple[int, Any, Mapping[str, str]]:
                 status, parsed, headers = http.send(
                     method,
                     f"{http.origin}{path}",
                     dict(body) if body is not None else None,
                     params=dict(params) if params else None,
+                    extra_headers=dict(extra_headers) if extra_headers else None,
                 )
                 return status, parsed, headers
 
@@ -846,6 +862,18 @@ class ReactiveClient:
         # Best-config head and publish routes stay on the release-family digest.
         return f"{HEAD_PREFIX}/{self.agent_ref}{tail}"
 
+    def _head_headers(self) -> dict[str, str]:
+        """``X-Project-Id`` for a head or publish request; empty when no project is set.
+
+        Built at request time and never in the constructor, so head reads used by other
+        paths keep working.  An explicit blank raises before any request and never falls
+        back to the environment; with no project nothing is sent and the backend decides.
+        """
+        return project_header_for(
+            self.project_id if self._project_given else (self.project_id or None),
+            lambda: RuntimeRequirementError("invalid_request", "project_id"),
+        )
+
     def _call(
         self,
         method: str,
@@ -855,9 +883,16 @@ class ReactiveClient:
         ok: tuple[int, ...] = (200,),
         body: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
+        request_headers: Mapping[str, str] | None = None,
     ) -> Any:
         try:
-            status, parsed, headers = self._transport(method, path, params, body)
+            # Only the head and publish routes carry request headers; the transport gets
+            # a fifth argument for them alone.
+            status, parsed, headers = (
+                self._transport(method, path, params, body, request_headers)  # type: ignore[call-arg]
+                if request_headers is not None
+                else self._transport(method, path, params, body)
+            )
         except ReactiveError:
             raise
         except RuntimeRequirementError as exc:
@@ -873,6 +908,8 @@ class ReactiveClient:
                 raise ReactiveError(
                     E_BACKEND, "response", status=status, ambiguous=True
                 ) from None
+        if request_headers is not None and is_project_context_required(status, parsed):
+            raise ProjectContextRequiredError(status=status)
         code = parse_refusal(parsed)
         if code is None:
             raise ReactiveError(E_BACKEND, "response", status=status, ambiguous=True)
@@ -1358,6 +1395,7 @@ class ReactiveClient:
             self._head_path(f"/publish-results/{key}/finalize"),
             _parse_publish_result,
             body={"schema_version": SCHEMA_VERSION},
+            request_headers=self._head_headers(),
         )
         return self._publish_result(doc, key)
 
@@ -1381,6 +1419,7 @@ class ReactiveClient:
             self._head_path(f"/publish-results/{key}"),
             _parse_publish_result,
             body=body,
+            request_headers=self._head_headers(),
         )
         return self._publish_result(doc, key)
 
@@ -1389,7 +1428,12 @@ class ReactiveClient:
 
         ``GET /best-configs/agent-heads/{agent_ref}/config`` (ETag = generation).
         """
-        doc = self._call("GET", self._head_path("/config"), _parse_pinned)
+        doc = self._call(
+            "GET",
+            self._head_path("/config"),
+            _parse_pinned,
+            request_headers=self._head_headers(),
+        )
         return PinnedConfig(doc["generation"], doc["version"], doc["spec"])
 
     def _publish_result(self, doc: Mapping[str, Any], key: str) -> PublishResult:

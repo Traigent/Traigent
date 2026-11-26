@@ -918,3 +918,134 @@ def test_the_project_pattern_is_the_vendored_contract_pattern() -> None:
     contract = params["schema"]["pattern"]
     assert contract.startswith("^") and contract.endswith("(?![\\s\\S])")
     assert hosted._PROJECT_ID == contract[1 : -len("(?![\\s\\S])")]
+
+
+# --- explicit project on the head and publish routes ---------------------------------------
+
+
+class _HeadRecorder:
+    def __init__(self, status: int = 200, body: Any = None) -> None:
+        self.calls: list[tuple[str, str, Any]] = []
+        self.status, self.body = status, body
+
+    def __call__(
+        self, method: str, path: str, params: Any, body: Any, headers: Any = None
+    ) -> tuple[int, Any, dict[str, str]]:
+        self.calls.append((method, path, headers))
+        return self.status, self.body, {}
+
+
+_HEAD_KEY = f"deploy:attemptref_{'a' * 32}:{'b' * 64}:{'c' * 64}"
+_HEAD_CALLS = {
+    "config": lambda c: c.get_pinned_config(),
+    "publish": lambda c: c.publish_deploy(key=_HEAD_KEY, best_config_id="x", version=1),
+    "finalize": lambda c: c.finalize_publish(_HEAD_KEY),
+}
+
+
+def _head_client(rec: _HeadRecorder, **kw: Any) -> ReactiveClient:
+    from traigent.runtime.hosted import TokenMap
+
+    return ReactiveClient(
+        DIGEST, TokenMap(Path("/nonexistent-token-state")), transport=rec, **kw
+    )
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_send_the_configured_project_unchanged(
+    name: str, monkeypatch: Any
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(404, {})
+    client = _head_client(rec, project_id=REACTIVE_PROJECT)
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](client)
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_env_fallback(name: str, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    rec = _HeadRecorder(404, {})
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](_head_client(rec))
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_without_project_send_no_header_and_map_422(
+    name: str, monkeypatch: Any
+) -> None:
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(
+        422, {"success": False, "error_code": "PROJECT_CONTEXT_REQUIRED"}
+    )
+    client = _head_client(rec)  # the constructor never raises for a missing project
+    with pytest.raises(ProjectContextRequiredError) as err:
+        _HEAD_CALLS[name](client)
+    assert str(err.value) == (
+        "this call needs a project: set TRAIGENT_PROJECT_ID or use a project-bound key"
+    )
+    assert len(rec.calls) == 1
+    assert not rec.calls[0][2]  # no X-Project-Id
+
+
+def test_head_call_without_project_succeeds_when_backend_accepts(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(404, {})
+    with pytest.raises(RuntimeRequirementError):
+        _head_client(rec).get_pinned_config()
+    assert len(rec.calls) == 1 and not rec.calls[0][2]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_head_calls_explicit_blank_raises_before_transport(
+    name: str, blank: str, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    rec = _HeadRecorder()
+    client = _head_client(rec, project_id=blank)
+    with pytest.raises(RuntimeRequirementError) as err:
+        _HEAD_CALLS[name](client)
+    assert err.value.path == "project_id"
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_send_legacy_project_default_unchanged(
+    name: str, monkeypatch: Any
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(404, {})
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](_head_client(rec, project_id="project_default"))
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": "project_default"}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_control_character_project_raises_before_transport(
+    name: str,
+) -> None:
+    rec = _HeadRecorder()
+    with pytest.raises(RuntimeRequirementError) as err:
+        _HEAD_CALLS[name](_head_client(rec, project_id="p\nX-Evil: 1"))
+    assert "Evil" not in str(err.value)
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize(
+    "code", ["PROJECT_CONTEXT_REQUIRED", "PROJECT_CONTEXT_REQUIRED_FOR_WRITE"]
+)
+def test_head_call_maps_both_project_context_codes(code: str, monkeypatch: Any) -> None:
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(422, {"error_code": code})
+    with pytest.raises(ProjectContextRequiredError):
+        _head_client(rec).get_pinned_config()
+    assert len(rec.calls) == 1

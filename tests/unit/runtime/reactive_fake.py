@@ -353,7 +353,9 @@ class StrictBackend:
         path: str,
         params: Any,
         body: Any,
+        headers: Any = None,
     ) -> tuple[int, Any, dict[str, str]]:
+        self.last_headers = dict(headers) if headers else {}
         # The wire is JSON: round-trip so what the fake sees is what a server would.
         if isinstance(body, str):  # a pre-serialised body: duplicate keys are refused
             try:

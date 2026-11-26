@@ -89,7 +89,12 @@ from traigent.cloud.url_security import (
 )
 from traigent.cloud.user_agent import get_sdk_user_agent
 from traigent.config.backend_config import BackendConfig
-from traigent.config.project import read_optional_project_env
+from traigent.config.project import (
+    PROJECT_CONTEXT_REQUIRED_MESSAGE,
+    is_project_context_required,
+    project_header_for,
+    read_optional_project_env,
+)
 from traigent.core import best_config_diagnostics as diag
 from traigent.core.best_config_diagnostics import transport_failed_message
 from traigent.core.session_types import safe_http_error_summary
@@ -117,6 +122,7 @@ BACKEND_CLIENT = "backend client"
 REQUESTS_IS_UNAVAILABLE = "requests is unavailable"
 AGENT_HEAD_FETCH = "Agent-head fetch"
 BACKEND_BEST_CONFIG_URL_IS_INVALID = "Backend best-config URL is invalid"
+BEST_CONFIG_PROJECT_BLANK = "The configured project id is blank or invalid"
 BEST_CONFIG_PUBLISH = "Best-config publish"
 BEST_CONFIG_FETCH = "Best-config fetch"
 EXAMPLE_FEATURE_UPLOAD = "Example feature upload"
@@ -2414,6 +2420,29 @@ class BackendIntegratedClient:
             ),
         )
 
+    def _best_config_project_header(self) -> dict[str, str]:
+        """``X-Project-Id`` for a flat best-config call; empty when no project is set.
+
+        An explicitly passed blank project raises before any request; with none
+        configured no header is sent and the backend decides.
+        """
+        return project_header_for(
+            self.project_id,
+            lambda: CloudServiceError(BEST_CONFIG_PROJECT_BLANK),
+        )
+
+    @staticmethod
+    def _raise_if_project_context_required(response: Any) -> None:
+        """Map the closed 422 ``PROJECT_CONTEXT_REQUIRED`` to a fixed-text error."""
+        body: Any = None
+        if response.status_code == 422:
+            try:
+                body = response.json()
+            except Exception:  # noqa: BLE001 - not the closed envelope
+                body = None
+        if is_project_context_required(response.status_code, body):
+            raise CloudServiceError(PROJECT_CONTEXT_REQUIRED_MESSAGE)
+
     def _build_best_config_url(self, config_id: str | None = None) -> str | None:
         """Return a sanitized best-config URL for the configured backend API."""
         parsed = urlparse(self.api_base_url)
@@ -2728,6 +2757,7 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             AGENT_HEAD_FETCH, _get_head, self.max_retries
         )
+        self._raise_if_project_context_required(response)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2870,7 +2900,9 @@ class BackendIntegratedClient:
         url = self._build_best_config_url()
         if not url:
             raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
+        project_header = self._best_config_project_header()
         headers = self._get_sync_auth_headers(target="backend")
+        headers.update(project_header)
         if if_match:
             headers["If-Match"] = if_match
         headers[_AGENT_REF_HEADER] = agent_ref
@@ -2948,7 +2980,9 @@ class BackendIntegratedClient:
         if not url:
             raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
+        project_header = self._best_config_project_header()
         headers = self._get_sync_auth_headers(target="backend")
+        headers.update(project_header)
         if if_match:
             headers["If-Match"] = if_match
         if agent_id is not None and expected_head_generation is not None:
@@ -3005,6 +3039,7 @@ class BackendIntegratedClient:
             )
             if stale is not None:
                 raise stale
+        self._raise_if_project_context_required(response)
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Best-config publish rejected: "
@@ -3104,7 +3139,9 @@ class BackendIntegratedClient:
         if not url:
             raise CloudServiceError(BACKEND_BEST_CONFIG_URL_IS_INVALID)
 
+        project_header = self._best_config_project_header()
         headers = self._get_sync_auth_headers(target="backend")
+        headers.update(project_header)
         if etag:
             headers["If-None-Match"] = etag
         oo_egress.assert_closed_ids(
@@ -3159,6 +3196,7 @@ class BackendIntegratedClient:
 
         if response.status_code == 404:
             return None
+        self._raise_if_project_context_required(response)
         if response.status_code >= 400:
             raise CloudServiceError(
                 f"Best-config fetch rejected: "

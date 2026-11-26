@@ -129,6 +129,7 @@ class RuntimeClient:
         body: dict[str, Any] | None = None,
         *,
         params: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> tuple[int, Any, dict[str, str]]:
         """One request to an absolute ``url``: ``(status, parsed JSON or None, headers)``.
 
@@ -166,6 +167,8 @@ class RuntimeClient:
             "Accept": "application/json",
             "User-Agent": get_sdk_user_agent(),
         }
+        if extra_headers:
+            headers.update(extra_headers)
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["json"] = freeze_json_body(body)
