@@ -112,6 +112,12 @@ Rates are decimal strings or `decimal.Decimal`. Floats are rejected with `E_FLOA
 The module context (tvars, objectives, evaluation set, environment) comes from the
 `@traigent.optimize` function. For tests pass `Tuning(..., module_context={...})`.
 
+### Executing the audit sampling locally
+
+The SDK executes the `hash_bernoulli_committed_v1` sampling a `RandomAudit` declares, on your machine. `sampler_from_monitor(monitor, window_id=...)` returns a `CommittedSampler` (or `None` when the monitor declares no sampling, i.e. a census). The window id is required and non-empty. The rate must be strictly between 0 and 1. A key you supply must be `bytes` of at least 32 bytes; use a fresh key per window. Publish `sampler.commitment()` (mode, window id, rate, SHA-256 of the secret key) before the window starts, call `sampler.keep(unit_id)` per unit, and store kept units in your own store (the SDK writes no unit ids and sends nothing anywhere). The choice depends only on the key, window id and unit id, never on an outcome, so assign unit ids before the outcome is known and never re-draw them. The selection probability is `ceil(rate * 2^64) / 2^64`, within `2^-64` of the rate.
+
+After the window, `sampler.reveal()` gives the key and `verify_sampling(commitment, key, eligible_unit_ids, kept_unit_ids)` recomputes the whole selection: it is true only if the kept ids are exactly the eligible ids the key selects. Record the commitment somewhere it cannot later change before the window opens, and keep the complete list of eligible unit ids, not only the kept ones; the key stays on your side until the window closes.
+
 ## The human decision this controller takes
 
 The local loop asks a person once, and `traigent tune status` (or `status --text`) shows what

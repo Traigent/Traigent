@@ -95,6 +95,24 @@ def _rate(value: Any, field: str) -> Decimal:
     return dec
 
 
+MAX_RATE_SIGNIFICANT_DIGITS = 64
+
+
+def check_rate_digits(rate: Decimal, field: str) -> None:
+    """Refuse a rate with more than 64 significant digits (context-free, linear)."""
+    digits = rate.as_tuple().digits
+    end = len(digits)
+    while end > 0 and digits[end - 1] == 0:
+        end -= 1
+    start = 0
+    while start < end and digits[start] == 0:
+        start += 1
+    if end - start > MAX_RATE_SIGNIFICANT_DIGITS:
+        raise TuningError(
+            E_INVALID_TUNING, f"{field}: rate has more than 64 significant digits"
+        )
+
+
 def _str_list(value: Any, field: str) -> tuple[str, ...]:
     if value is None:
         value = []
@@ -146,7 +164,9 @@ class RandomAudit:
     rate: Any
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "rate", _rate(self.rate, "RandomAudit.rate"))
+        rate = _rate(self.rate, "RandomAudit.rate")
+        check_rate_digits(rate, "RandomAudit.rate")
+        object.__setattr__(self, "rate", rate)
 
 
 @dataclass(frozen=True)
