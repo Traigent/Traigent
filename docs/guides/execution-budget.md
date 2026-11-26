@@ -189,7 +189,7 @@ budget.record_external(cost_usd=0.012, examples=1)
 
 ### Agents that make no model calls
 
-Cost with no captured usage is **unknown**, never `$0`: an unmeasured example would
+Cost with no captured usage is treated as **unknown**, not `$0`: an unmeasured example would
 otherwise rank as the cheapest. If an example path genuinely makes no model calls
 (a rule-based or lookup agent), say so by wrapping its return value in
 `traigent.with_usage(value, total_cost=0)`. That records a *measured* `$0`:

@@ -45,8 +45,7 @@ export TRAIGENT_STRICT_METRICS_NULLS=false
     "input_tokens": 0.0,
     "output_tokens": 0.0,
     "total_tokens": 0.0,
-    "response_time_ms": 0.0,
-    "cost": 0.0
+    "response_time_ms": 0.0
   }
 }
 ```
@@ -61,13 +60,14 @@ export TRAIGENT_STRICT_METRICS_NULLS=false
     "input_tokens": null,
     "output_tokens": null,
     "total_tokens": null,
-    "response_time_ms": null,
-    "cost": null
+    "response_time_ms": null
   }
 }
 ```
 
 Note: `accuracy` and `score` remain `0.0` as they represent actual measured values, not missing data.
+
+An unmeasured `cost` (an unpriced model, or no captured usage) is not reported as `null`. The `cost` key is left out of the trial metrics in both modes, so `metrics.get("cost")` returns `None`.
 
 ## Affected Components
 
@@ -111,9 +111,10 @@ export TRAIGENT_STRICT_METRICS_NULLS=true
    if metrics["cost"] > 0:
        process_cost(metrics["cost"])
 
-   # After (handles None)
-   if metrics["cost"] is not None and metrics["cost"] > 0:
-       process_cost(metrics["cost"])
+   # After (handles None and a missing key)
+   cost = metrics.get("cost")
+   if cost is not None and cost > 0:
+       process_cost(cost)
    ```
 
 3. **Update aggregation logic**:

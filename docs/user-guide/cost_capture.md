@@ -134,13 +134,14 @@ and hedges an unrecorded result only while mock mode is on in the process.
 A missing measurement is not a free call. When a custom-evaluator example has
 no captured usage, its result has `metadata["llm_usage_measured"] = False`
 and no token or cost keys. When no example in a trial was measured, the
-trial's token and cost totals are left out of its metrics (or set to `None`
-when `TRAIGENT_STRICT_METRICS_NULLS=true`) instead of being reported as `0`.
+trial's token totals and its `cost` are left out of its metrics (token totals are set
+to `None` when `TRAIGENT_STRICT_METRICS_NULLS=true`; `cost` is left out in both modes)
+instead of being reported as `0`.
 When only some examples were measured, the totals cover those examples and a
 warning names the coverage.
 
 The same holds for a `cost` objective: a trial with no measured example has
-no `cost` (or `None` under strict nulls), never `0.0`; `cost_unmeasured` is
+no `cost` key in its metrics (in both modes), so `get_metric("cost")` is `None`; `cost_unmeasured` is
 `1.0` on a trial where any example had no measured cost, and token counts
 estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
 table shows the cost as `unmeasured`. Weighted `best_config` selection counts a
