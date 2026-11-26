@@ -232,15 +232,12 @@ Unwrapped, the same function reports cost as unmeasured and a strict run
   - **the consumed cost is a lower bound** — the SDK will not claim a hard monetary
     guarantee it cannot honor.
 
-  `enforce_untracked_cost=True` **fails closed mid-run only for trials that report
-  no cost** (`cost is None`, e.g. a raw-provider trial with no usage data) **or are
-  flagged `cost_unmeasured`** (such a trial is charged its known floor): the next
-  admission after such a trial stops with `stop_reason == "execution_budget"`. A
-  model that is merely *unpriced* but reports a concrete `$0` is **not** caught
-  mid-run — that debit is indistinguishable from a genuinely free `$0` trial. The
-  silent-`$0` path is reconciled at **finalization** (folded into `cost_tracking`
-  via the cost enforcer's unknown-cost mode and the `UNPRICED_MODEL_RUNTIME`
-  warning) and surfaced as a lower-bound cost, not stopped while running.
+  `enforce_untracked_cost=True` stops admission whenever `cost_tracking` is not
+  `"complete"`, with `stop_reason == "execution_budget"`. That happens after a trial
+  that reports no cost (`cost is None`, e.g. a raw-provider trial with no usage
+  data) or is flagged `cost_unmeasured` (such a trial is charged its known floor),
+  and after `budget.record_external(examples=1)` with no cost, even before any
+  trial is recorded.
 - **The cost cap is enforced at batch/trial boundaries, not per token.** The shared
   remaining is checked by the pre-batch admission gate before each batch and by the
   stop condition between trials — never mid-call. In **parallel** mode a batch of up

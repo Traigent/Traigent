@@ -2,9 +2,8 @@
 
 Traigent charges each trial for the LLM calls its examples make. It reads the
 provider's reported usage (prompt and completion tokens), prices it, and
-records `input_tokens`, `output_tokens`, `total_tokens`, `input_cost`,
-`output_cost` and `total_cost` on each example and trial where usage is
-reported and the model is priced.
+records token counts and costs on each example, and token and cost totals on
+each trial, where usage is reported and the model is priced.
 
 This page lists which calls are captured, how to price a model Traigent does
 not know, and what a trial reports when nothing was captured.
@@ -93,10 +92,7 @@ depends on `TRAIGENT_STRICT_COST_ACCOUNTING`:
   stops at the first call that has neither a table price nor a
   provider-reported cost. A run without a `cost` objective continues and the
   result carries an `UNPRICED_MODEL_RUNTIME` warning.
-- `false`: explicit opt-out. The run continues with the same warning. The
-  trial is flagged `cost_unpriced`, and a flagged trial is left out of cost
-  ranking (best config, Pareto front, weighted scores), so a placeholder cost
-  does not win as "cheapest".
+- `false`: explicit opt-out. The run continues with the same warning.
 
 Give the alias a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` (inline) or
 `TRAIGENT_CUSTOM_MODEL_PRICING_FILE` (path to the same JSON). Prices are USD
@@ -135,23 +131,20 @@ and hedges an unrecorded result only while mock mode is on in the process.
 A missing measurement is not a free call. When a custom-evaluator example has
 no captured usage, its result has `metadata["llm_usage_measured"] = False`
 and no token or cost keys. When no example in a trial was measured, the
-trial's token totals and its `cost` are left out of its metrics (token totals are set
-to `None` when `TRAIGENT_STRICT_METRICS_NULLS=true`; `cost` is left out in both modes)
-instead of being reported as `0`.
-When only some examples were measured, the totals cover those examples and a
-warning names the coverage.
+trial's cost is not reported as `0`; see below.
+When only some examples were measured, a warning names the coverage.
 
 The same holds for a `cost` objective. A local trial with no measured example
 has no `cost` key in its metrics, with strict nulls on or off, so
 `get_metric("cost")` is `None`. A custom evaluator with capture enabled and
-`TRAIGENT_STRICT_METRICS_NULLS=true` has `cost` present as `None`; with strict
-nulls off the key is left out. `cost_unmeasured` is
+`TRAIGENT_STRICT_METRICS_NULLS=true` can have `cost` present as `None`; with
+strict nulls off the key is left out. `cost_unmeasured` is
 `1.0` on a trial where any example had no measured cost, and token counts
 estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
-table shows the cost as `unmeasured`. When a cost objective drives ranking, `best_config` selection leaves out a
+table shows the cost as `unmeasured`, or as `≥` the known spend when
+that is positive. When a cost objective drives ranking, `best_config` selection leaves out a
 trial flagged unmeasured. The Pareto front leaves out a trial that is
-missing a configured objective, and the batch composite score gives such a
-trial the failed-trial score instead of scoring it on quality alone. A
+missing a configured objective. A
 constraint written as `metrics.get("cost", 0) <= limit` accepts a trial whose
 `cost` key is left out, and raises `TypeError` when the value is `None`. Write
 `cost = metrics.get("cost")` and test `cost is not None and cost <= limit`

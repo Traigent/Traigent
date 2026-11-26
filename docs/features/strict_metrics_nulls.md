@@ -35,35 +35,9 @@ export TRAIGENT_STRICT_METRICS_NULLS=false
 
 ## Behavior Comparison
 
-### JSON Output with Flag Disabled (Default)
-```json
-{
-  "metrics": {
-    "accuracy": 0.0,
-    "score": 0.0,
-    "duration": 0.0,
-    "response_time_ms": 0.0,
-    "cost_unmeasured": 1.0
-  }
-}
-```
+With the flag off, many missing metrics are reported as `0.0`. With it on, many are reported as `null` (`None` in Python). Some empty aggregates, such as an empty mean, stay `0.0` in both modes.
 
-### JSON Output with Flag Enabled
-```json
-{
-  "metrics": {
-    "accuracy": 0.0,
-    "score": 0.0,
-    "duration": null,
-    "response_time_ms": null,
-    "cost_unmeasured": 1.0
-  }
-}
-```
-
-Note: `accuracy` and `score` remain `0.0` as they represent actual measured values, not missing data.
-
-The examples show a trial whose cost could not be measured (an unpriced model, or no captured usage). On a local trial the `cost` key is left out in both modes and `cost_unmeasured` is `1.0`, so `metrics.get("cost")` returns `None`. Token fields are not shown: they can be replaced by labelled estimates.
+Cost is the exception on a local trial. When its cost could not be measured (an unpriced model, or no captured usage), the `cost` key is left out in both modes and `cost_unmeasured` is `1.0`, so `metrics.get("cost")` returns `None`.
 
 ## Affected Components
 
@@ -73,7 +47,7 @@ The examples show a trial whose cost could not be measured (an unpriced model, o
 
 ### Metrics Tracking
 - **`MetricsTracker`** in `traigent/evaluators/metrics_tracker.py`
-  - Returns `None` for missing metrics and aggregated statistics
+  - Applies the flag to some missing metrics and aggregated statistics
 
 ### Evaluators
 - **`BaseEvaluator`** in `traigent/evaluators/base.py`
@@ -99,13 +73,8 @@ export TRAIGENT_STRICT_METRICS_NULLS=true
    TRAIGENT_STRICT_METRICS_NULLS=true python your_script.py
    ```
 
-2. **Update code that expects numeric values**:
+2. **Update code that expects numeric values.** An unmeasured local `cost` is left out of the metrics, so `metrics["cost"]` raises `KeyError`. Read it with `.get()`:
    ```python
-   # Before (assumes the key exists; raises KeyError when cost is left out)
-   if metrics["cost"] > 0:
-       process_cost(metrics["cost"])
-
-   # After (handles None and a missing key)
    cost = metrics.get("cost")
    if cost is not None and cost > 0:
        process_cost(cost)
@@ -176,7 +145,7 @@ The test suite covers:
 
 ## Backward Compatibility
 
-The feature is **disabled by default** to maintain backward compatibility. Existing code will continue to work unchanged, receiving `0.0` for most missing values as before. An unmeasured local `cost` is left out in both modes.
+The feature is **disabled by default** to maintain backward compatibility. An unmeasured local `cost` is left out in both modes.
 
 To ensure your code works with both modes:
 ```python
