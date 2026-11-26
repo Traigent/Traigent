@@ -95,6 +95,37 @@ def _rate(value: Any, field: str) -> Decimal:
     return dec
 
 
+MAX_RATE_PLACES = 30
+
+
+def _bounded_places(rate: Decimal, field: str) -> Decimal:
+    """Strip trailing zeros (context-free) and refuse > 30 decimal places.
+
+    The exponent is checked before any arithmetic so a huge exponent costs nothing.
+    """
+    sign, digits, exp = rate.as_tuple()
+    if not isinstance(exp, int):
+        raise TuningError(E_INVALID_TUNING, f"{field}: rate must be finite")
+    if exp < -1000:
+        _too_many_places(field)
+    ds = list(digits)
+    while len(ds) > 1 and ds[-1] == 0 and exp < 0:
+        ds.pop()
+        exp += 1
+    if all(d == 0 for d in ds):
+        exp = 0
+    if -exp > MAX_RATE_PLACES:
+        _too_many_places(field)
+    return Decimal((sign, tuple(ds), exp))
+
+
+def _too_many_places(field: str) -> None:
+    raise TuningError(
+        E_INVALID_TUNING,
+        f"{field}: rate has too many decimal places (max {MAX_RATE_PLACES})",
+    )
+
+
 def _str_list(value: Any, field: str) -> tuple[str, ...]:
     if value is None:
         value = []
@@ -146,7 +177,8 @@ class RandomAudit:
     rate: Any
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "rate", _rate(self.rate, "RandomAudit.rate"))
+        rate = _rate(self.rate, "RandomAudit.rate")
+        object.__setattr__(self, "rate", _bounded_places(rate, "RandomAudit.rate"))
 
 
 @dataclass(frozen=True)

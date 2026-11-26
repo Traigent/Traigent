@@ -10,6 +10,7 @@ import pytest
 
 from traigent.tuning import (
     CommittedSampler,
+    RandomAudit,
     TuningError,
 )
 from traigent.tuning import audit_sampling as mod
@@ -316,3 +317,41 @@ def test_verify_short_or_non_bytes_key_false():
     )
     assert verify_sampling(c_short, short, [], []) is False
     assert verify_sampling(c, bytearray(KEY), [], []) is False
+
+
+PADDED = "0.5" + "0" * 30
+
+
+@tvl_free
+def test_padded_rate_accepted_and_committed_canonically():
+    s = CommittedSampler(PADDED, KEY, window_id="w")
+    assert s.commitment().rate == "0.5"
+    assert RandomAudit(PADDED).rate == Decimal("0.5")
+
+
+@tvl_free
+def test_padded_rate_via_monitor_and_verify():
+    s = sampler_from_monitor(
+        {"evidence": {"sampling": {"mode": mod.SAMPLING_MODE, "rate": PADDED}}},
+        window_id="w",
+        key=KEY,
+    )
+    assert s is not None
+    ids = [f"u{i}" for i in range(50)]
+    kept = [u for u in ids if s.keep(u)]
+    for rate in (PADDED, "0.5"):
+        c = mod.SamplingCommitment(
+            mod.SAMPLING_MODE, "w", rate, hashlib.sha256(KEY).hexdigest()
+        )
+        assert verify_sampling(c, KEY, ids, kept)
+
+
+@tvl_free
+@pytest.mark.parametrize("rate", ["1e-31", "1e-10000000"])
+def test_too_many_places_refused_by_audit_and_sampler(rate):
+    with pytest.raises(TuningError) as exc:
+        RandomAudit(rate)
+    assert exc.value.code == E_INVALID_TUNING
+    with pytest.raises(TuningError) as exc:
+        CommittedSampler(rate, KEY, window_id="w")
+    assert exc.value.code == E_INVALID_TUNING

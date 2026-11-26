@@ -25,11 +25,10 @@ from decimal import Decimal
 from typing import Any
 
 from traigent.tuning.errors import E_INVALID_TUNING, TuningError
-from traigent.tuning.policy import _rate
+from traigent.tuning.policy import _bounded_places, _rate
 
 SAMPLING_MODE = "hash_bernoulli_committed_v1"
 _MIN_KEY_BYTES = 32
-_MAX_RATE_PLACES = 30
 
 
 @dataclass(frozen=True)
@@ -47,14 +46,7 @@ def _open_rate(value: Any, field: str) -> Decimal:
     rate: Decimal = _rate(value, field)
     if not Decimal(0) < rate < Decimal(1):
         raise TuningError(E_INVALID_TUNING, f"{field}: must be strictly within (0, 1)")
-    # Bound the work before as_integer_ratio, whose cost grows with the exponent.
-    t = rate.as_tuple()
-    places = -t.exponent if isinstance(t.exponent, int) else 0
-    if places > _MAX_RATE_PLACES or len(t.digits) > _MAX_RATE_PLACES:
-        raise TuningError(
-            E_INVALID_TUNING,
-            f"{field}: rate has too many decimal places (max {_MAX_RATE_PLACES})",
-        )
+    rate = _bounded_places(rate, field)
     numerator, denominator = rate.as_integer_ratio()
     if (2**64 - 1) * denominator < numerator * 2**64:
         raise TuningError(
