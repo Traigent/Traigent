@@ -37,6 +37,7 @@ from typing import Any
 
 from traigent.runtime import manifest
 from traigent.runtime.hosted import (
+    ProjectContextRequiredError,
     PublishResult,
     ReactiveClient,
     ReactiveError,
@@ -101,6 +102,8 @@ def _publish_error_action(exc: ReactiveError) -> tuple[str, float | None]:
         return "refused", None
     if exc.code == "publication_cancelled":
         return "cancelled", None
+    if isinstance(exc, ProjectContextRequiredError):
+        raise exc  # keep the fixed guidance text; a hold would reduce it to a code
     if not _retryable(exc):
         raise DeployHold(exc.code) from None
     return "retry", exc.retry_after
@@ -291,6 +294,8 @@ class DeployController:
             try:
                 result = self.client.finalize_publish(key)
             except ReactiveError as exc:
+                if isinstance(exc, ProjectContextRequiredError):
+                    raise
                 if not _retryable(exc):
                     raise DeployHold(exc.code) from None
                 if attempt < self.max_attempts - 1:

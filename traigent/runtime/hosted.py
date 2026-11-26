@@ -886,11 +886,12 @@ class ReactiveClient:
         request_headers: Mapping[str, str] | None = None,
     ) -> Any:
         try:
-            # Only the head and publish routes carry request headers; the transport gets
-            # a fifth argument for them alone.
+            # Only a head or publish call that has a project carries request headers;
+            # the transport then gets a fifth argument.  Without one it is called with
+            # four arguments exactly as before, so existing transports keep working.
             status, parsed, headers = (
                 self._transport(method, path, params, body, request_headers)  # type: ignore[call-arg]
-                if request_headers is not None
+                if request_headers
                 else self._transport(method, path, params, body)
             )
         except ReactiveError:

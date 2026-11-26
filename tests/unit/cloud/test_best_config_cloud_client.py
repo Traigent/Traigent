@@ -453,3 +453,50 @@ def test_message_text_alone_is_not_mapped(monkeypatch):
         with pytest.raises(CloudServiceError) as err:
             _call_fetch(client)
     assert str(err.value) != _PCR_TEXT
+
+
+@pytest.mark.parametrize("bad", ["p\r\n", "\tp", "p\n"])
+def test_flat_call_control_character_at_the_edges_raises_before_transport(
+    bad, monkeypatch
+):
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    client = _flat_client(project_id=bad)
+    with _auth(client), patch("requests.get") as mock_http:
+        with pytest.raises(CloudServiceError):
+            _call_fetch(client)
+    mock_http.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "code", ["PROJECT_CONTEXT_REQUIRED", "PROJECT_CONTEXT_REQUIRED_FOR_WRITE"]
+)
+def test_protected_publish_maps_both_project_context_codes(code, monkeypatch):
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    client = _flat_client()
+    with (
+        _auth(client),
+        patch.object(
+            client,
+            "_protected_request",
+            return_value=_response(422, {"error_code": code}),
+        ) as sent,
+    ):
+        with pytest.raises(CloudServiceError) as err:
+            client._publish_best_config_with_ref(
+                _spec(), "staging", None, None, 1, "agentref_" + "a" * 32
+            )
+    assert str(err.value) == _PCR_TEXT
+    assert sent.call_count == 1
+    assert "X-Project-Id" not in sent.call_args.kwargs["headers"]
+
+
+def test_a_list_error_code_on_a_422_is_not_mapped(monkeypatch):
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    client = _flat_client()
+    with _auth(client), patch("requests.get") as mock_http:
+        mock_http.return_value = _response(
+            422, {"error_code": ["PROJECT_CONTEXT_REQUIRED"]}
+        )
+        with pytest.raises(CloudServiceError) as err:
+            _call_fetch(client)
+    assert str(err.value) != _PCR_TEXT

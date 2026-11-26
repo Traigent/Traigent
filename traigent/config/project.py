@@ -89,13 +89,18 @@ def project_header_for(
         resolved = read_optional_project_env() or ""
         if not resolved:
             return {}
+        raw = resolved
     elif isinstance(explicit, str):
-        resolved = explicit.strip()
+        raw = explicit
     else:
         raise blank_error()
     # No shape check: the backend accepts more shapes than the reactive paths do.
-    # Only an empty value or a header-unsafe one (control characters) is refused.
-    if not resolved or any(ord(ch) < 32 or ord(ch) == 127 for ch in resolved):
+    # Only an empty value or a header-unsafe one (control characters, checked on the
+    # raw value BEFORE trimming, so a trailing CR/LF/TAB is refused) is rejected.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise blank_error()
+    resolved = raw.strip()
+    if not resolved:
         raise blank_error()
     return {PROJECT_HEADER: resolved}
 
@@ -107,4 +112,5 @@ def is_project_context_required(status: int, body: object) -> bool:
     """
     if status != 422 or not isinstance(body, dict):
         return False
-    return body.get("error_code") in PROJECT_CONTEXT_REQUIRED_CODES
+    code = body.get("error_code")
+    return isinstance(code, str) and code in PROJECT_CONTEXT_REQUIRED_CODES

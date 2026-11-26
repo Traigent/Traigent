@@ -2757,7 +2757,6 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             AGENT_HEAD_FETCH, _get_head, self.max_retries
         )
-        self._raise_if_project_context_required(response)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         try:
@@ -2922,6 +2921,7 @@ class BackendIntegratedClient:
             json=payload,
             headers=headers,
         )
+        self._raise_if_project_context_required(response)
         if response.status_code >= 400:
             raise self._head_refusal_from_response(response)
         return self._extract_backend_data(response)

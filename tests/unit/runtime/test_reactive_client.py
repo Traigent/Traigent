@@ -996,10 +996,63 @@ def test_head_call_without_project_succeeds_when_backend_accepts(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
-    rec = _HeadRecorder(404, {})
-    with pytest.raises(RuntimeRequirementError):
-        _head_client(rec).get_pinned_config()
-    assert len(rec.calls) == 1 and not rec.calls[0][2]
+    spec = {"config": {"temperature": 0.2}}
+    rec = _HeadRecorder(
+        200, {"schema_version": 1, "generation": 3, "version": 2, "spec": spec}
+    )
+    pinned = _head_client(rec).get_pinned_config()
+    assert (pinned.generation, pinned.version, pinned.spec) == (3, 2, spec)
+    assert len(rec.calls) == 1
+    assert rec.calls[0][2] is None  # no X-Project-Id, no headers argument at all
+
+
+def test_four_argument_transport_is_called_exactly_as_before_without_a_project(
+    monkeypatch: Any,
+) -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    seen: list[tuple[Any, ...]] = []
+
+    def four_arg(method: str, path: str, params: Any, body: Any) -> Any:
+        seen.append((method, path))
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    client = ReactiveClient(
+        DIGEST, TokenMap(Path("/nonexistent-token-state")), transport=four_arg
+    )
+    assert client.get_pinned_config().generation == 1
+    assert seen == [("GET", f"/api/v1/best-configs/agent-heads/{DIGEST}/config")]
+
+
+def test_a_list_error_code_is_not_a_project_context_refusal() -> None:
+    from traigent.config.project import is_project_context_required
+
+    for bad in (["PROJECT_CONTEXT_REQUIRED"], {"a": 1}, None, 5):
+        assert is_project_context_required(422, {"error_code": bad}) is False
+
+
+@pytest.mark.parametrize(
+    "bad", ["legacy.id\r\n", "legacy.id\n", "\tlegacy.id", "\rlegacy.id", "a\tb"]
+)
+def test_control_characters_are_refused_before_the_trim(bad: str) -> None:
+    from traigent.config.project import project_header_for
+
+    def boom() -> Exception:
+        return ValueError("blank")
+
+    with pytest.raises(ValueError):
+        project_header_for(bad, boom)
+    assert project_header_for("  legacy.id  ", boom) == {"X-Project-Id": "legacy.id"}
+
+
+def test_deploy_controller_keeps_the_project_guidance_text() -> None:
+    from traigent.runtime.deploy import _publish_error_action
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    with pytest.raises(ProjectContextRequiredError) as err:
+        _publish_error_action(ProjectContextRequiredError(status=422))
+    assert "TRAIGENT_PROJECT_ID" in str(err.value)
 
 
 @pytest.mark.parametrize("name", list(_HEAD_CALLS))
