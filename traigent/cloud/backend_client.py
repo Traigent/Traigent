@@ -2602,8 +2602,6 @@ class BackendIntegratedClient:
 
         def _get_head() -> Any:
             try:
-                if is_backend_offline():
-                    return None
                 preflight_requests("GET", url, params=params)
                 response = (
                     requests.get(  # nosec B113 - timeout is provided
@@ -3190,13 +3188,19 @@ class BackendIntegratedClient:
         def _get_best_config() -> Any:
             try:
                 preflight_requests("GET", url, params=params or None)
-                response = requests.get(  # nosec B113 - timeout is provided
-                    url,
-                    params=params or None,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                response = (
+                    requests.get(  # nosec B113 - timeout is provided
+                        url,
+                        params=params or None,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if not is_backend_offline()
+                    else None
                 )
+                if response is None:
+                    return None
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -3214,6 +3218,8 @@ class BackendIntegratedClient:
             _get_best_config,
             self.max_retries,
         )
+        if response is None:
+            raise CloudEgressBlockedError("fetch best config")
         if response.status_code == 304:
             # Not Modified answers the If-None-Match conditional fetch. It is not a
             # redirect: nothing is followed and no Location is read, so it is answered

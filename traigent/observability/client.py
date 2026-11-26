@@ -72,6 +72,7 @@ from traigent.utils.exceptions import (
 from traigent.utils.logging import get_logger
 from traigent.utils.pagination import iter_pages
 from traigent.utils.retry import CLOUD_API_RETRY_CONFIG, RetryHandler
+from traigent.utils.retry import ServiceUnavailableError as CircuitBreakerRefusedError
 from traigent.utils.send_policy import may_send_telemetry
 from traigent.utils.url_segments import quote_path_segment
 
@@ -1023,6 +1024,10 @@ class _SuppressedBatch:
 _BATCH_SUPPRESSED = _SuppressedBatch()
 
 
+class _BatchRetrySuppressed(Exception):
+    """Abort a breaker-refused retry before its backoff: sending is now denied."""
+
+
 @dataclass
 class _TraceBatchFlushResult(BatchFlushResult):
     items_suppressed: int = 0
@@ -1060,8 +1065,11 @@ class _SyncBatchTransport:
         health_callback: Callable[[str, dict[str, Any]], None] | None = None,
         max_traces_per_request: int | None = INGEST_MAX_TRACES_PER_REQUEST,
         max_observations_per_request: int | None = INGEST_MAX_OBSERVATIONS_PER_REQUEST,
+        send_policy: Callable[[], bool] | None = None,
     ) -> None:
         self._sender = sender
+        # Live "may this sink be sent to?" check; None leaves it to the sender.
+        self._send_policy = send_policy
         self._health_callback = health_callback
         self.batch_size = batch_size
         self.max_buffer_age = max_buffer_age
@@ -1861,31 +1869,53 @@ class _SyncBatchTransport:
     ) -> tuple[bool, list[tuple[str, dict[str, Any]]]]:
         events: list[tuple[str, dict[str, Any]]] = []
         payloads = [payload for _, payload in batch_items]
-        result = self._retry_handler.execute_with_result(self._sender, payloads)
+        if self._send_policy is not None and not self._send_policy():
+            # Denied before the retry runner: no breaker probe, backoff or send.
+            self._record_batch_suppressed(batch_items)
+            return True, events
+        try:
+            result = self._retry_handler.execute_with_result(self._sender, payloads)
+        except _BatchRetrySuppressed:
+            self._record_batch_suppressed(batch_items)
+            return True, events
 
         if result.success:
             if result.result is _BATCH_SUPPRESSED:
-                with self._lock:
-                    self._items_suppressed += len(
-                        {item_id for item_id, _ in batch_items} | self._buffer.keys()
-                    )
-                    for item_id, _ in batch_items:
-                        digest = self._inflight_digests.pop(item_id, None)
-                        if digest is not None:
-                            self._suppressed_digests[item_id] = digest
-                        self._settled_items.add(item_id)
-                    for item_id, buffered in self._buffer.items():
-                        self._suppressed_digests[item_id] = buffered.digest
-                        self._settled_items.add(item_id)
-                    while len(self._suppressed_digests) > self.max_queue_size:
-                        self._suppressed_digests.popitem(last=False)
-                    self._buffer.clear()
-                    self._cancel_timer_locked()
+                self._record_batch_suppressed(batch_items)
                 return True, events
             return True, self._record_batch_success(
                 batch_items, payloads, result, events
             )
+        if (
+            self._send_policy is not None
+            and isinstance(result.error, CircuitBreakerRefusedError)
+            and not self._send_policy()
+        ):
+            # An open or half-open breaker never reached the sender's own check.
+            self._record_batch_suppressed(batch_items)
+            return True, events
         return False, self._record_batch_failure(batch_items, payloads, result, events)
+
+    def _record_batch_suppressed(
+        self, batch_items: list[tuple[str, dict[str, Any]]]
+    ) -> None:
+        """Settle this batch and the queued items without counting a delivery."""
+        with self._lock:
+            self._items_suppressed += len(
+                {item_id for item_id, _ in batch_items} | self._buffer.keys()
+            )
+            for item_id, _ in batch_items:
+                digest = self._inflight_digests.pop(item_id, None)
+                if digest is not None:
+                    self._suppressed_digests[item_id] = digest
+                self._settled_items.add(item_id)
+            for item_id, buffered in self._buffer.items():
+                self._suppressed_digests[item_id] = buffered.digest
+                self._settled_items.add(item_id)
+            while len(self._suppressed_digests) > self.max_queue_size:
+                self._suppressed_digests.popitem(last=False)
+            self._buffer.clear()
+            self._cancel_timer_locked()
 
     def _build_result(
         self,
@@ -2017,7 +2047,14 @@ class _SyncBatchTransport:
         )
 
     def _record_retry(self, error: Exception, attempt: int) -> None:
-        del error, attempt
+        del attempt
+        if (
+            self._send_policy is not None
+            and isinstance(error, CircuitBreakerRefusedError)
+            and not self._send_policy()
+        ):
+            # Observe the denial now; it may be cleared again during the backoff.
+            raise _BatchRetrySuppressed
         with self._lock:
             self._stats["retry_attempts"] += 1
 
@@ -3720,6 +3757,7 @@ class ObservabilityClient:
             max_observations_per_request=(
                 INGEST_MAX_OBSERVATIONS_PER_REQUEST if backend_sink else None
             ),
+            send_policy=may_send_telemetry if backend_sink else None,
         )
 
     def _send_payload_batch(

@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import gzip
 import importlib.util
 import json
 import socket
@@ -35,8 +36,9 @@ from traigent.core import trace_export_gate
 from traigent.integrations.observability import workflow_traces
 from traigent.observability import ObservabilityClient, ObservabilityConfig
 from traigent.observability.otel.exporter import TraigentOTLPExporter
-from traigent.observability.otel.transport import TransportResponse
+from traigent.observability.otel.transport import TransportResponse, UrllibTransport
 from traigent.utils import optimization_only_egress
+from traigent.utils.retry import CircuitBreakerState
 
 pytestmark = pytest.mark.backend_online
 OPT_OUT = "TRAIGENT_DISABLE_TELEMETRY"
@@ -120,6 +122,37 @@ def test_dedicated_export(monkeypatch, flag, point):
         assert result.exported == 0
         assert post.call_count == (point == "retry")
         assert check.call_count == (point != "entry")
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+def test_dedicated_export_rechecks_after_compression(monkeypatch, flag):
+    compress = gzip.compress
+
+    def compress_and_flip(body, **kwargs):
+        compressed = compress(body, **kwargs)
+        _flip(monkeypatch, flag)
+        return compressed
+
+    response = BytesIO(b"")
+    response.status = 200
+    response.headers = {}
+    open_request = Mock(return_value=response)
+    transport = UrllibTransport(f"{ORIGIN}/v1/traces", HEADERS)
+    monkeypatch.setattr(transport._opener, "open", open_request)
+    monkeypatch.setattr(gzip, "compress", compress_and_flip)
+    result = TraigentOTLPExporter(transport).export_batch(_spans())
+
+    assert result.exported == int(flag is None)
+    assert result.dropped_offline == int(flag is not None)
+    assert result.dropped_retry_exhausted == 0
+    if flag is None:
+        open_request.assert_called_once()
+        request = open_request.call_args.args[0]
+        assert request.full_url == f"{ORIGIN}/v1/traces"
+        assert request.get_header("Content-encoding") == "gzip"
+        assert gzip.decompress(request.data)
+    else:
+        open_request.assert_not_called()
 
 
 @pytest.mark.parametrize("flag", FLAGS)
@@ -424,6 +457,8 @@ def test_dataset_features(monkeypatch, flag, point):
         "_example_feature_chunks",
         lambda features: ([feature] for feature in features),
     )
+    retry = Mock(wraps=backend_client._run_sync_backend_request_with_retry)
+    monkeypatch.setattr(backend_client, "_run_sync_backend_request_with_retry", retry)
     post = Mock(side_effect=send)
     monkeypatch.setattr(requests, "post", post)
     if point == "entry":
@@ -446,6 +481,8 @@ def test_dataset_features(monkeypatch, flag, point):
         2 + int(point == "retry") if flag is None else int(point in ("next", "retry"))
     )
     assert build_headers.call_count == int(flag is None or point != "entry")
+    if point == "next":
+        assert retry.call_count == (2 if flag is None else 1)
     if post.called:
         assert post.call_args_list[0].kwargs["json"]["features"] == [{"x": 1}]
 
@@ -499,6 +536,65 @@ async def test_hybrid_session(monkeypatch, flag, finalize):
             await send()
         post.assert_not_called()
     get_headers.assert_awaited_once()
+
+
+@pytest.mark.parametrize("flag", (None, OFFLINE))
+async def test_hybrid_creation_metadata_bytes_and_send_boundary(monkeypatch, flag):
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    metadata = {"label": {"value": "before auth"}}
+    filter_metadata = session_operations.filter_wire_metadata
+
+    def filter_and_flip(value):
+        snapshot = filter_metadata(value)
+        _flip(monkeypatch, flag)
+        return snapshot
+
+    async def headers():
+        await asyncio.sleep(0)
+        metadata["label"]["value"] = "after auth"
+        return HEADERS
+
+    post = Mock(
+        return_value=_Response(
+            201,
+            {"session_id": "session", "token": "token", "optimizer_endpoint": ORIGIN},
+        )
+    )
+    get_headers = AsyncMock(side_effect=headers)
+    client = SimpleNamespace(
+        no_egress=False,
+        backend_config=SimpleNamespace(api_base_url=ORIGIN, project_id=None),
+        auth_manager=SimpleNamespace(auth=SimpleNamespace(get_headers=get_headers)),
+        _active_sessions_lock=RLock(),
+        _active_sessions={},
+        _ensure_session=AsyncMock(return_value=_Session(post)),
+    )
+    ops = session_operations.SessionOperations(client)
+    monkeypatch.setattr(ops, "_with_project", lambda value: value)
+    monkeypatch.setattr(session_operations, "filter_wire_metadata", filter_and_flip)
+
+    if flag is not None:
+        with pytest.raises(CloudEgressBlockedError, match="create hybrid session"):
+            await ops.create_hybrid_session("canary", {}, {}, metadata)
+        post.assert_not_called()
+        get_headers.assert_not_awaited()
+    else:
+        assert await ops.create_hybrid_session("canary", {}, {}, metadata) == (
+            "session",
+            "token",
+            ORIGIN,
+        )
+        post.assert_called_once()
+        assert post.call_args.args == (f"{ORIGIN}/hybrid/sessions",)
+        assert post.call_args.kwargs["headers"] == HEADERS
+        # Body captured on develop while auth mutates the caller's metadata.
+        assert json.dumps(post.call_args.kwargs["json"]).encode("utf-8") == (
+            b'{"problem_statement": "canary", "search_space": {}, '
+            b'"optimization_config": {}, "metadata": {"label": {"value": "before auth"}}}'
+        )
+        assert metadata["label"]["value"] == "after auth"
+        get_headers.assert_awaited_once()
 
 
 @pytest.mark.parametrize("flag", FLAGS)
@@ -1332,6 +1428,55 @@ def test_agent_head_rechecks_before_each_get(monkeypatch, flag, point):
 
 
 @pytest.mark.parametrize("flag", (None, OFFLINE))
+@pytest.mark.parametrize("point", ("auth", "preflight", "retry"))
+def test_best_config_rechecks_before_each_get(monkeypatch, flag, point):
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    client = backend_client.BackendIntegratedClient.__new__(
+        backend_client.BackendIntegratedClient
+    )
+    client.no_egress = False
+    client.api_base_url = ORIGIN
+    client.project_id = "project"
+    client.max_retries = 1
+    client.timeout = 1
+
+    async def headers(**kwargs):
+        await asyncio.sleep(0)
+        if point == "auth":
+            _flip(monkeypatch, flag)
+        return dict(HEADERS)
+
+    get_headers = AsyncMock(side_effect=headers)
+    client.auth_manager = SimpleNamespace(auth=SimpleNamespace(get_headers=get_headers))
+    preflight = backend_client.preflight_requests
+
+    def before_send(*args, **kwargs):
+        preflight(*args, **kwargs)
+        if point == "preflight":
+            _flip(monkeypatch, flag)
+
+    def get_response(*args, **kwargs):
+        if get.call_count == 1 and point == "retry":
+            _flip(monkeypatch, flag)
+            return _Response(503)
+        return _Response(304)
+
+    get = Mock(side_effect=get_response)
+    monkeypatch.setattr(backend_client, "preflight_requests", before_send)
+    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    if flag is None:
+        assert client.fetch_best_config_sync("config") is None
+        assert get.call_count == (2 if point == "retry" else 1)
+    else:
+        with pytest.raises(CloudEgressBlockedError, match="fetch best config"):
+            client.fetch_best_config_sync("config")
+        assert get.call_count == int(point == "retry")
+    get_headers.assert_awaited_once()
+
+
+@pytest.mark.parametrize("flag", (None, OFFLINE))
 @pytest.mark.parametrize(
     "operation", ("intermediate", "run-status", "measures", "experiment-status")
 )
@@ -1667,6 +1812,66 @@ def _legacy_client(**config):
     )
 
 
+@pytest.mark.parametrize(
+    ("flag", "point"),
+    (
+        (None, "flush"),
+        (OPT_OUT, "flush"),
+        (OFFLINE, "flush"),
+        (OPT_OUT, "refusal"),
+        (OFFLINE, "refusal"),
+    ),
+)
+def test_legacy_flush_with_open_breaker(monkeypatch, flag, point):
+    client = _legacy_client()
+    breaker = client._transport._retry_handler.circuit_breaker
+    assert breaker is not None
+    breaker.state = CircuitBreakerState.OPEN
+
+    def refuse_probe(_):
+        if point == "refusal":
+            _flip(monkeypatch, flag)
+        return False
+
+    monkeypatch.setattr(breaker, "_should_attempt_reset", refuse_probe)
+
+    def backoff(_):
+        if point == "refusal":
+            monkeypatch.delenv(flag)
+            breaker.state = CircuitBreakerState.CLOSED
+
+    sleep = Mock(side_effect=backoff)
+    monkeypatch.setattr("time.sleep", sleep)
+    validate = Mock(return_value=True)
+    monkeypatch.setattr(
+        optimization_only_egress, "ensure_trace_egress_allowed", validate
+    )
+    send = Mock(side_effect=lambda *args, **kwargs: BytesIO(b"{}"))
+    monkeypatch.setattr(client, "_open_http_request", send)
+    try:
+        client.start_trace("held", trace_id="held")
+        client.end_trace("held")
+        if point == "flush":
+            _flip(monkeypatch, flag)
+        result = client.flush()
+        send.assert_not_called()
+        validate.assert_not_called()
+        if flag is not None:
+            sleep.assert_not_called()
+        assert result.items_sent == 0
+        assert result.items_pending == int(flag is None)
+        assert result.items_suppressed == int(flag is not None)
+        if flag is not None:
+            monkeypatch.delenv(flag)
+        breaker.state = CircuitBreakerState.CLOSED
+        recovered = client.flush()
+        assert recovered.items_pending == 0
+        assert recovered.items_suppressed == int(flag is not None)
+        assert send.call_count == int(flag is None)
+    finally:
+        client.close()
+
+
 @pytest.mark.parametrize("flag", FLAGS)
 def test_legacy_batch_refused_by_validation(monkeypatch, flag):
     def validate(*args, **kwargs):
@@ -1824,27 +2029,94 @@ class _HttpHandoffs(ast.NodeVisitor):
         "transport",
         "connector",
     )
+    _session_factories = {
+        "aiohttp.ClientSession",
+        "aiohttp.client.ClientSession",
+        "httpx.AsyncClient",
+        "httpx.Client",
+        "requests.Session",
+        "requests.sessions.Session",
+    }
 
     def __init__(self, tree):
         self.calls = Counter()
         self.functions = []
         self.aliases = http_egress_scan._aliases(tree)
+        self.session_receivers = [set()]
+
+    def visit_ClassDef(self, node):
+        # A method can use a session assigned by another method, in either order.
+        members = set()
+        for method in node.body:
+            if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for assignment in ast.walk(method):
+                if isinstance(assignment, ast.Assign):
+                    targets = assignment.targets
+                elif isinstance(assignment, ast.AnnAssign):
+                    targets = (assignment.target,)
+                else:
+                    continue
+                members.update(
+                    name
+                    for name in self._session_targets(assignment.value, targets)
+                    if name.startswith("self.")
+                )
+        self.session_receivers.append(members)
+        self.generic_visit(node)
+        self.session_receivers.pop()
 
     def visit_FunctionDef(self, node):
         self.functions.append(node.name)
+        self.session_receivers.append(set())
         self.generic_visit(node)
+        self.session_receivers.pop()
         self.functions.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
-    def visit_Call(self, node):
-        dotted = http_egress_scan._dotted(node.func)
+    def _resolve(self, node):
+        dotted = http_egress_scan._dotted(node)
         head, _, tail = dotted.partition(".")
         target = self.aliases.get(head, head)
-        resolved = f"{target}.{tail}" if tail else target
+        return f"{target}.{tail}" if tail else target
+
+    def _is_session_instance(self, value):
+        return (
+            isinstance(value, ast.Call)
+            and self._resolve(value.func) in self._session_factories
+        )
+
+    def _session_targets(self, value, targets):
+        if self._is_session_instance(value):
+            yield from (http_egress_scan._dotted(target) for target in targets)
+
+    def _track_session(self, value, targets):
+        self.session_receivers[-1].update(self._session_targets(value, targets))
+
+    def visit_Assign(self, node):
+        self._track_session(node.value, node.targets)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        self._track_session(node.value, (node.target,))
+        self.generic_visit(node)
+
+    def visit_withitem(self, node):
+        if node.optional_vars is not None:
+            self._track_session(node.context_expr, (node.optional_vars,))
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        resolved = self._resolve(node.func)
         receiver, _, method = resolved.rpartition(".")
         transport = receiver.split(".")[0] in {"aiohttp", "httpx", "requests", "urllib"}
-        session = any(part in receiver.lower() for part in self._receivers)
+        session = (
+            isinstance(node.func, ast.Attribute)
+            and self._is_session_instance(node.func.value)
+            or any(part in receiver.lower() for part in self._receivers)
+            or any(receiver in scope for scope in self.session_receivers)
+        )
         http_call = method in self._methods and (
             transport or session or method in {"post", "request", "patch"}
         )
@@ -1869,6 +2141,40 @@ def _http_handoffs(root):
         visitor.visit(tree)
         if visitor.calls:
             yield file.relative_to(root).as_posix(), visitor.calls
+
+
+@pytest.mark.parametrize(
+    ("source", "call"),
+    (
+        (
+            "import requests\nconn = requests.Session()\nconn.get('https://example.com')",
+            "<module>/get",
+        ),
+        (
+            "from requests import Session as Open\n"
+            "def fetch():\n    conn = Open()\n    conn.get('https://example.com')",
+            "fetch/get",
+        ),
+        (
+            "import requests\nclass Example:\n"
+            "    def fetch(self):\n        self.conn.get('https://example.com')\n"
+            "    def __init__(self):\n        self.conn = requests.Session()",
+            "fetch/get",
+        ),
+        (
+            "import requests\nrequests.Session().get('https://example.com')",
+            "<module>/get",
+        ),
+        (
+            "from requests import Session as Open\nOpen().get('https://example.com')",
+            "<module>/get",
+        ),
+    ),
+    ids=("variable", "aliased-import", "instance-attribute", "inline", "inline-alias"),
+)
+def test_http_inventory_recognizes_session_instance(tmp_path, source, call):
+    (tmp_path / "probe.py").write_text(source, encoding="utf-8")
+    assert dict(_http_handoffs(tmp_path)) == {"probe.py": Counter({call: 1})}
 
 
 def test_new_http_handoffs_require_a_canary():

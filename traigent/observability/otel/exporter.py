@@ -40,6 +40,7 @@ from traigent.observability.otel.transport import (
     Transport,
     TransportError,
     TransportResponse,
+    _TelemetrySuppressed,
 )
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.send_policy import may_send_telemetry
@@ -245,6 +246,9 @@ class TraigentOTLPExporter(SpanExporter):
                 return
             try:
                 resp = self._transport.post(body, timeout=timeout)
+            except _TelemetrySuppressed:
+                outcome.dropped_offline += count
+                return
             except TransportError:
                 resp = None
             if resp is not None and self._handle_response(

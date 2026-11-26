@@ -1359,6 +1359,14 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
+            payload = {
+                "problem_statement": problem_statement,
+                "search_space": search_space,
+                "optimization_config": optimization_config,
+                "metadata": (
+                    filter_wire_metadata(metadata) if metadata is not None else None
+                ),
+            }
             if analytics and not may_send_telemetry():
                 raise CloudEgressBlockedError("create analytics session")
             self._raise_if_backend_egress_disabled("create hybrid session")
@@ -1370,14 +1378,7 @@ class SessionOperations:
             self._raise_if_backend_egress_disabled("create hybrid session")
             async with session.post(
                 f"{api_base}/hybrid/sessions",
-                json={
-                    "problem_statement": problem_statement,
-                    "search_space": search_space,
-                    "optimization_config": optimization_config,
-                    "metadata": (
-                        filter_wire_metadata(metadata) if metadata is not None else None
-                    ),
-                },
+                json=payload,
                 headers=headers,
             ) as response:
                 if response.status != 201:

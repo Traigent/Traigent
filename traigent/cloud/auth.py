@@ -2080,7 +2080,7 @@ class AuthManager:
                 else None
             )
             if response is None:
-                return reason or "backend validation returned no response"
+                return reason
             observe_requests_response(response)
         except requests.Timeout:
             return "backend validation timed out"

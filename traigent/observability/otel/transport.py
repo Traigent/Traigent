@@ -13,10 +13,15 @@ from traigent.observability.client import (
     _NoRedirectHandler,
     _parse_retry_after,
 )
+from traigent.utils.send_policy import may_send_telemetry
 
 
 class TransportError(Exception):
     """Network-level failure (connect/reset/timeout); retryable."""
+
+
+class _TelemetrySuppressed(Exception):
+    """Telemetry policy withheld the POST; nothing was sent, so never retry."""
 
 
 @dataclass
@@ -49,6 +54,10 @@ class UrllibTransport:
         req = urllib.request.Request(
             self._url, data=payload, headers=headers, method="POST"
         )
+        # Recheck after compression, outside the try so the generic handler
+        # cannot turn a suppression into a retryable transport failure.
+        if not may_send_telemetry():
+            raise _TelemetrySuppressed
         try:
             with self._opener.open(req, timeout=max(0.05, timeout)) as resp:  # nosec B310
                 return TransportResponse(
