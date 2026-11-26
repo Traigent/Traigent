@@ -189,36 +189,25 @@ def test_sampler_rate_just_below_one_still_works():
 
 
 @tvl_free
-def test_sampler_rate_huge_exponent_refused_quickly():
-    with pytest.raises(TuningError) as exc:
-        CommittedSampler("1e-10000000", KEY, window_id="w")
-    assert exc.value.code == E_INVALID_TUNING
-
-
-@tvl_free
-def test_verify_huge_exponent_commitment_refused_quickly():
+def test_huge_exponent_rate_works_fast_with_threshold_one():
+    s = CommittedSampler("1e-10000000", KEY, window_id="w")
+    assert s._threshold == 1
     c = mod.SamplingCommitment(
-        mod.SAMPLING_MODE,
-        "w",
-        "1e-10000000",
-        hashlib.sha256(KEY).hexdigest(),
+        mod.SAMPLING_MODE, "w", "1e-10000000", hashlib.sha256(KEY).hexdigest()
     )
-    assert not verify_sampling(c, KEY, [], [])
+    assert verify_sampling(c, KEY, ["a", "b"], [u for u in "ab" if s.keep(u)])
 
 
 @tvl_free
-def test_rate_with_30_decimal_places_accepted():
-    rate = f"0.{'0' * 29}1"  # 30 places
-    s = CommittedSampler(rate, KEY, window_id="w")
-    assert s.commitment().rate == rate
+def test_tiny_rate_works_and_policy_unchanged():
+    assert RandomAudit("1e-31").rate == Decimal("1e-31")
+    assert CommittedSampler("1e-31", KEY, window_id="w")._threshold == 1
 
 
 @tvl_free
-def test_rate_with_31_decimal_places_refused():
-    rate = f"0.{'0' * 30}1"  # 31 places
-    with pytest.raises(TuningError) as exc:
-        CommittedSampler(rate, KEY, window_id="w")
-    assert exc.value.code == E_INVALID_TUNING
+def test_thresholds_exact():
+    assert CommittedSampler("0.25", KEY, window_id="w")._threshold == 2**62
+    assert CommittedSampler("0.1", KEY, window_id="w")._threshold == -(-(2**64) // 10)
 
 
 @tvl_free
@@ -319,7 +308,7 @@ def test_verify_short_or_non_bytes_key_false():
     assert verify_sampling(c, bytearray(KEY), [], []) is False
 
 
-PADDED = "0.5" + "0" * 30
+PADDED = "0.5" + "0" * 1000
 
 
 @tvl_free
@@ -344,14 +333,3 @@ def test_padded_rate_via_monitor_and_verify():
             mod.SAMPLING_MODE, "w", rate, hashlib.sha256(KEY).hexdigest()
         )
         assert verify_sampling(c, KEY, ids, kept)
-
-
-@tvl_free
-@pytest.mark.parametrize("rate", ["1e-31", "1e-10000000"])
-def test_too_many_places_refused_by_audit_and_sampler(rate):
-    with pytest.raises(TuningError) as exc:
-        RandomAudit(rate)
-    assert exc.value.code == E_INVALID_TUNING
-    with pytest.raises(TuningError) as exc:
-        CommittedSampler(rate, KEY, window_id="w")
-    assert exc.value.code == E_INVALID_TUNING

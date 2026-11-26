@@ -25,7 +25,7 @@ from decimal import Decimal
 from typing import Any
 
 from traigent.tuning.errors import E_INVALID_TUNING, TuningError
-from traigent.tuning.policy import _bounded_places, _rate
+from traigent.tuning.policy import _rate
 
 SAMPLING_MODE = "hash_bernoulli_committed_v1"
 _MIN_KEY_BYTES = 32
@@ -41,20 +41,43 @@ class SamplingCommitment:
     key_digest: str
 
 
-def _open_rate(value: Any, field: str) -> Decimal:
-    """A rate strictly inside (0, 1), as TVL's prob_open requires."""
+def _strip_zeros(rate: Decimal) -> Decimal:
+    """Drop trailing zero digits by hand (context-free, linear in digit count)."""
+    sign, digits, exp = rate.as_tuple()
+    assert isinstance(exp, int)  # _rate refuses non-finite values
+    ds = list(digits)
+    while len(ds) > 1 and ds[-1] == 0 and exp < 0:
+        ds.pop()
+        exp += 1
+    return Decimal((sign, tuple(ds), exp))
+
+
+def _threshold(rate: Decimal) -> int:
+    """T = ceil(rate * 2**64) for a rate in (0, 1), exactly, at bounded cost."""
+    if rate.adjusted() < -20:  # rate < 1e-20 < 2**-64, so 0 < rate * 2**64 < 1
+        return 1
+    _, digits, exp = rate.as_tuple()
+    assert isinstance(exp, int)
+    numerator = int("".join(map(str, digits)))
+    if exp >= 0:
+        return int(numerator * 10**exp * 2**64)
+    return int(-(-(numerator * 2**64) // 10**-exp))
+
+
+def _open_rate(value: Any, field: str) -> tuple[Decimal, int]:
+    """A rate strictly inside (0, 1) as TVL's prob_open requires, and its threshold."""
     rate: Decimal = _rate(value, field)
     if not Decimal(0) < rate < Decimal(1):
         raise TuningError(E_INVALID_TUNING, f"{field}: must be strictly within (0, 1)")
-    rate = _bounded_places(rate, field)
-    numerator, denominator = rate.as_integer_ratio()
-    if (2**64 - 1) * denominator < numerator * 2**64:
+    rate = _strip_zeros(rate)
+    threshold = _threshold(rate)
+    if threshold >= 2**64:
         raise TuningError(
             E_INVALID_TUNING,
             f"{field}: rate is too close to 1 for a 64-bit draw "
             "(even the largest hash would be kept)",
         )
-    return rate
+    return rate, threshold
 
 
 def _check_id(value: Any, field: str) -> str:
@@ -72,13 +95,12 @@ def _hash_int(key: bytes, window_id: str, unit_id: str) -> int:
     return int.from_bytes(mac[:8], "big")
 
 
-def _decide(rate: Decimal, key: bytes, window_id: str, unit_id: str) -> bool:
-    numerator, denominator = rate.as_integer_ratio()
-    return _hash_int(key, window_id, unit_id) * denominator < numerator * 2**64
+def _decide(threshold: int, key: bytes, window_id: str, unit_id: str) -> bool:
+    return _hash_int(key, window_id, unit_id) < threshold
 
 
 class CommittedSampler:
-    """Keep a unit iff HMAC(key, window, unit) falls below ``rate`` (exact, no floats).
+    """Keep a unit iff the 64-bit HMAC(key, window, unit) is below ``ceil(rate * 2**64)`` (exact, no floats).
 
     Selection probability is ``ceil(rate * 2**64) / 2**64`` (absolute error below
     ``2**-64``).  ``rate`` must be strictly within (0, 1).  Use a fresh key per
@@ -87,7 +109,7 @@ class CommittedSampler:
     """
 
     def __init__(self, rate: Any, key: bytes | None = None, *, window_id: str) -> None:
-        self._rate = _open_rate(rate, "CommittedSampler.rate")
+        self._rate, self._threshold = _open_rate(rate, "CommittedSampler.rate")
         if key is None:
             key = secrets.token_bytes(_MIN_KEY_BYTES)
         elif not isinstance(key, bytes) or len(key) < _MIN_KEY_BYTES:
@@ -108,7 +130,7 @@ class CommittedSampler:
 
     def keep(self, unit_id: str) -> bool:
         _check_id(unit_id, "unit_id")
-        return _decide(self._rate, self._key, self._window_id, unit_id)
+        return _decide(self._threshold, self._key, self._window_id, unit_id)
 
     def reveal(self) -> bytes:
         return self._key
@@ -145,7 +167,7 @@ def verify(
     if not hmac.compare_digest(hashlib.sha256(key).hexdigest(), commitment.key_digest):
         return False
     try:
-        rate = _open_rate(commitment.rate, "commitment.rate")
+        _, threshold = _open_rate(commitment.rate, "commitment.rate")
         _check_id(commitment.window_id, "commitment.window_id")
     except TuningError:
         return False
@@ -153,7 +175,9 @@ def verify(
     kept = _unique_ids(kept_unit_ids)
     if eligible is None or kept is None or not kept <= eligible:
         return False
-    return kept == {u for u in eligible if _decide(rate, key, commitment.window_id, u)}
+    return kept == {
+        u for u in eligible if _decide(threshold, key, commitment.window_id, u)
+    }
 
 
 def sampler_from_monitor(
