@@ -28,12 +28,23 @@ Tracing is opt-in. Configure it via environment variables:
 # Enable tracing
 export TRAIGENT_TRACE_ENABLED=true
 
-# Configure OTLP endpoint (default: localhost:4317)
+# Configure the OTLP endpoint (required: with no endpoint set, tracing stays off)
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 
 # Set service name
 export OTEL_SERVICE_NAME=my-optimization-service
 ```
+
+This add-on reads `OTEL_EXPORTER_OTLP_ENDPOINT`. That differs from the
+`traigent.observability.otel` layer (see `docs/observability/otel.md`), which
+ignores every `OTEL_EXPORTER_OTLP_*` variable on purpose, so that an environment
+variable cannot redirect the Traigent API key. Here the endpoint is a destination
+you choose, and the add-on sends only the headers from
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS` or `OTEL_EXPORTER_OTLP_HEADERS`; it does not
+add the configured Traigent API key on its own. If you put a Traigent `X-API-Key`
+in those headers, it goes to whatever endpoint you set, so point the variable
+only at a collector you control and trust. Export is checked against the
+`optimization_only` egress policy before it is sent.
 
 `TRAIGENT_TRACE_ENABLED` is the canonical tracing flag and defaults to
 `false`. The older plural spelling `TRAIGENT_TRACES_ENABLED` is **no longer

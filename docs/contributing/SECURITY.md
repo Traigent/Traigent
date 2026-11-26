@@ -59,7 +59,7 @@ A new secure credential store has been implemented with:
 
 ## Seamless Injection Safety
 
-Seamless injection already uses AST-based rewrites in `traigent/config/providers.py`. No migration is required; `injection_mode="seamless"` is the safe default.
+Seamless injection already uses AST-based rewrites in `traigent/config/providers.py`. No migration is required. `injection_mode="seamless"` is opt-in; the default is `"context"`. Seamless mode rewrites your function's source in memory (AST transform and compile) and rejects `import`, `exec` and `eval`; see [the network and behaviour manifest](../security/network-and-behaviour-manifest.md).
 
 ## Authentication Setup
 
@@ -209,9 +209,10 @@ store.rotate_credential("DATABASE_PASSWORD", "<NEW_DATABASE_PASSWORD>")
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.10.x  | :white_check_mark: |
-| 0.9.x   | :white_check_mark: |
-| < 0.9   | :x:                |
+| 0.32.x (latest) | :white_check_mark: |
+| < 0.32  | :x:                |
+
+Traigent is pre-1.0: security fixes are released for the latest 0.x minor release.
 
 ## Reporting Security Issues
 

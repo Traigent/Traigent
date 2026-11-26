@@ -6,7 +6,7 @@ Install: `pip install "traigent[observability]"` (add `observability-openai`,
 ```python
 import traigent.observability.otel as otel
 
-otel.init(api_key="tg_...", service_name="support-bot")   # metadata-only by default
+otel.init(api_key="tg_...", service_name="support-bot")   # metadata-only by default  # pragma: allowlist secret
 
 @otel.observe("answer", as_type="chain")
 def answer(question): ...
@@ -42,7 +42,9 @@ The SDK declares its mode as the resource attribute `traigent.content_mode.v1`.
 The declaration never grants permission. **The current receiver drops content
 attributes in every mode**, so `record` sends content that is then discarded
 server-side; storing content will require a future authenticated project
-policy.
+policy. The SDK still transmits the content in `record` mode: the discard is
+server-side, not a client-side control. The same statement applies to
+`record` in [telemetry](../api-reference/telemetry.md).
 
 ### Boundaries you must know
 
