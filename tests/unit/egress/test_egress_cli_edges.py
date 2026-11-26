@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
 from click.testing import CliRunner
 
-from traigent.cli.egress_commands import RELAY_ENV_VAR, egress
+from traigent.cli.egress_commands import RELAY_ENV_VAR, _export_line, egress
 from traigent.egress.log import RelayLog
 
 
@@ -143,3 +145,16 @@ def test_show_reports_a_missing_seq_on_stderr_and_exits_1(log_path):
     result = CliRunner().invoke(egress, ["show", "7", "--log", str(log_path)])
     assert result.exit_code == 1
     assert "no logged request with seq 7" in result.output
+
+
+def test_exported_no_proxy_survives_commas_and_spaces_in_a_posix_shell():
+    value = "corp.example, internal.example"
+    line = _export_line("no_proxy", value)
+    out = subprocess.run(
+        ["bash", "-c", f'{line}; printf %s "$no_proxy"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out == value
+    assert shlex.split(line)[0] == "export"

@@ -51,6 +51,11 @@ def _with_relay_host(existing: str | None) -> str:
     return ",".join(tokens)
 
 
+def _export_line(name: str, value: str) -> str:
+    """A POSIX ``export`` line whose value survives spaces, commas and quotes."""
+    return f"export {name}={shlex.quote(value)}"
+
+
 def _run_child(command: str, origin: str) -> int:
     argv = shlex.split(command)
     if not argv:
@@ -105,10 +110,10 @@ def relay_command(
     if command is None:
         click.echo(
             f"egress relay listening on {origin}; log: {log_path}\n"
-            f"export TRAIGENT_BACKEND_URL={origin}\n"
-            f"export {RELAY_ENV_VAR}=1\n"
+            f"{_export_line('TRAIGENT_BACKEND_URL', origin)}\n"
+            f"{_export_line(RELAY_ENV_VAR, '1')}\n"
             + "\n".join(
-                f"export {name}={_with_relay_host(os.environ.get(name))}"
+                _export_line(name, _with_relay_host(os.environ.get(name)))
                 for name in NO_PROXY_ENV_VARS
             ),
         )

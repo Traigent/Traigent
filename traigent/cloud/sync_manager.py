@@ -132,6 +132,23 @@ def sanitize_backend_name(value: str, fallback: str = "Local Dataset") -> str:
     return sanitized or fallback
 
 
+_INVALID_PROJECT_HEADER_TEXT = (
+    "A configured header value (TRAIGENT_PROJECT_ID or the API key) contains "
+    "characters not allowed in an HTTP header"
+)
+
+
+def _safe_error_text(exc: BaseException) -> str:
+    """``str(exc)``, except an invalid header is named without quoting its value.
+
+    ``requests`` quotes the offending header value in ``InvalidHeader``; the
+    header values are the project id (``TRAIGENT_PROJECT_ID``) and the API key.
+    """
+    if isinstance(exc, requests.exceptions.InvalidHeader):
+        return _INVALID_PROJECT_HEADER_TEXT
+    return str(exc)
+
+
 class SyncManager:
     """
     Manages synchronization of local optimization data to Traigent backend.
@@ -1619,7 +1636,7 @@ class SyncManager:
                 "tenant_id": tenant_id,
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _safe_error_text(e)}
 
     @staticmethod
     def _optional_context_id(value: Any) -> str | None:
@@ -1662,7 +1679,7 @@ class SyncManager:
                 **self._project_request_kwargs(),
             )
         except Exception as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": _safe_error_text(exc)}
         if response.status_code not in (200, 201):
             return {
                 "success": False,
@@ -1755,7 +1772,7 @@ class SyncManager:
                     **self._project_request_kwargs(),
                 )
             except Exception as exc:
-                errors.append(f"trial {ordinal}: {exc}")
+                errors.append(f"trial {ordinal}: {_safe_error_text(exc)}")
                 continue
 
             if response.status_code in (200, 201):
@@ -1864,7 +1881,7 @@ class SyncManager:
                 "error": safe_http_error_summary(response.status_code, response.text),
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": _safe_error_text(e)}
 
     @staticmethod
     def _response_json(response: requests.Response) -> Any:
