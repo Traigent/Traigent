@@ -5,8 +5,8 @@
 customer's machine.  The keep-or-drop choice is a keyed hash of
 (window id, unit id): it is fixed by a key whose digest is published before the
 window starts, cannot depend on any unit's outcome, and can be re-checked after
-the key is revealed.  Nothing here touches the network; unit ids and records
-stay on this machine.
+the key is revealed.  Nothing here touches the network or stores unit ids; the
+caller keeps its own records on this machine.
 
 Selection probability is ``ceil(rate * 2**64) / 2**64`` (absolute error below
 ``2**-64`` from ``rate``).  Use a fresh key per window.  Unit ids must be assigned
@@ -18,19 +18,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
-import os
 import secrets
-import stat
-import sys
-from collections.abc import Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
-from traigent._fsutil import open_verified
 from traigent.tuning.errors import E_INVALID_TUNING, TuningError
 from traigent.tuning.policy import _rate
 
@@ -175,137 +168,3 @@ def sampler_from_monitor(
         # TVL carries JSON numbers; go through repr so 0.25 stays exact.
         rate = Decimal(repr(rate))
     return CommittedSampler(rate, key, window_id=window_id)
-
-
-_QUEUE_ERR = "audit queue path is not safe"
-_POSIX = os.name == "posix"
-_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
-
-
-@contextmanager
-def _locked(fd: int) -> Iterator[None]:
-    """Hold an exclusive lock on the open file for the block."""
-    if sys.platform == "win32":  # pragma: no cover - exercised on Windows only
-        import msvcrt
-
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
-        try:
-            yield
-        finally:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-
-
-def _drop_torn_tail(fd: int) -> None:
-    """Truncate an unfinished last line: its append never returned success."""
-    size = os.lseek(fd, 0, os.SEEK_END)
-    if size == 0:
-        return
-    os.lseek(fd, size - 1, os.SEEK_SET)
-    if os.read(fd, 1) == b"\n":
-        return
-    end = size
-    while end > 0:
-        start = max(0, end - 4096)
-        os.lseek(fd, start, os.SEEK_SET)
-        chunk = os.read(fd, end - start)
-        cut = chunk.rfind(b"\n")
-        if cut >= 0:
-            os.ftruncate(fd, start + cut + 1)
-            return
-        end = start
-    os.ftruncate(fd, 0)
-
-
-def _queue_error() -> TuningError:
-    return TuningError(E_INVALID_TUNING, _QUEUE_ERR)
-
-
-class LocalAuditQueue:
-    """Append-only per-window JSON-lines queue on local disk (0700 dir, 0600 files)."""
-
-    def __init__(self, directory: str | os.PathLike[str]) -> None:
-        self._dir = Path(directory)
-
-    def _path(self, window_id: str) -> Path:
-        if (
-            not window_id
-            or "/" in window_id
-            or "\\" in window_id
-            or "\x00" in window_id
-            or window_id.startswith(".")
-        ):
-            raise TuningError(E_INVALID_TUNING, "window_id is not a safe file name")
-        return self._dir / f"{window_id}.jsonl"
-
-    def _check_dir(self) -> None:
-        try:
-            self._dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-            info = self._dir.lstat()
-        except OSError:
-            raise _queue_error() from None
-        if not stat.S_ISDIR(info.st_mode):  # a symlink or file is not a directory
-            raise _queue_error()
-        if _POSIX and (info.st_uid != os.getuid() or info.st_mode & 0o077):
-            raise _queue_error()
-
-    def _open(self, path: Path, flags: int) -> int:
-        # O_NONBLOCK: opening a FIFO must not block before the regular-file check.
-        try:
-            fd = open_verified(path, flags | _NONBLOCK, 0o600)
-        except FileNotFoundError:
-            raise
-        except OSError:
-            raise _queue_error() from None
-        if _POSIX and os.fstat(fd).st_mode & 0o077:
-            os.close(fd)
-            raise _queue_error()
-        return int(fd)
-
-    def append(
-        self, unit_id: str, record: Mapping[str, Any], *, window_id: str
-    ) -> None:
-        path = self._path(window_id)
-        self._check_dir()
-        data = (
-            json.dumps({"unit_id": unit_id, "record": dict(record)}, sort_keys=True)
-            + "\n"
-        ).encode("utf-8")
-        fd = self._open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT)
-        try:
-            with _locked(fd):
-                _drop_torn_tail(fd)
-                view = memoryview(data)
-                while view:
-                    view = view[os.write(fd, view) :]
-                os.fsync(fd)
-        finally:
-            os.close(fd)
-
-    def list(self, window_id: str) -> list[dict[str, Any]]:
-        path = self._path(window_id)
-        self._check_dir()
-        try:
-            fd = self._open(path, os.O_RDONLY)
-        except FileNotFoundError:
-            return []
-        with os.fdopen(fd, "rb") as handle:
-            raw = handle.read()
-        pieces = raw.split(b"\n")
-        pieces.pop()  # after the last newline: empty, or an unfinished append
-        out: list[dict[str, Any]] = []
-        for piece in pieces:
-            try:
-                out.append(json.loads(piece))
-            except ValueError:
-                raise _queue_error() from None
-        return out

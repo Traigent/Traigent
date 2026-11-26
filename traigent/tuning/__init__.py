@@ -7,7 +7,6 @@ with ``E_TVL_VALIDATOR_UNAVAILABLE``.
 
 from traigent.tuning.audit_sampling import (
     CommittedSampler,
-    LocalAuditQueue,
     SamplingCommitment,
     sampler_from_monitor,
 )
@@ -58,7 +57,6 @@ __all__ = [
     "AcceptanceOutcome",
     "ApproverAuthority",
     "CommittedSampler",
-    "LocalAuditQueue",
     "SamplingCommitment",
     "Controller",
     "Diagnostic",

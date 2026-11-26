@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
 import decimal
 import hashlib
-import os
-import stat
 from decimal import Decimal
 
 import pytest
 
 from traigent.tuning import (
     CommittedSampler,
-    LocalAuditQueue,
     TuningError,
 )
 from traigent.tuning import audit_sampling as mod
@@ -246,143 +242,6 @@ def test_sampler_from_monitor_reads_rate():
 
 
 @tvl_free
-def test_queue_permissions_and_roundtrip(tmp_path):
-    q = LocalAuditQueue(tmp_path / "audit")
-    q.append("u1", {"a": 1}, window_id="w1")
-    q.append("u2", {"b": "x"}, window_id="w1")
-    assert stat.S_IMODE((tmp_path / "audit").stat().st_mode) == 0o700
-    assert stat.S_IMODE((tmp_path / "audit" / "w1.jsonl").stat().st_mode) == 0o600
-    assert q.list("w1") == [
-        {"unit_id": "u1", "record": {"a": 1}},
-        {"unit_id": "u2", "record": {"b": "x"}},
-    ]
-    assert q.list("other") == []
-
-
-@tvl_free
-def test_queue_refuses_unsafe_directory(tmp_path):
-    real = tmp_path / "real"
-    real.mkdir(mode=0o700)
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    with pytest.raises(TuningError):
-        LocalAuditQueue(link).append("u", {}, window_id="w")
-    open_dir = tmp_path / "open"
-    open_dir.mkdir()
-    open_dir.chmod(0o755)
-    with pytest.raises(TuningError):
-        LocalAuditQueue(open_dir).append("u", {}, window_id="w")
-    afile = tmp_path / "afile"
-    afile.write_text("x")
-    with pytest.raises(TuningError):
-        LocalAuditQueue(afile).append("u", {}, window_id="w")
-
-
-@tvl_free
-def test_queue_refuses_symlink_and_open_files(tmp_path):
-    d = tmp_path / "q"
-    q = LocalAuditQueue(d)
-    q.append("u", {}, window_id="w1")
-    target = tmp_path / "target"
-    target.write_text("")
-    (d / "w2.jsonl").symlink_to(target)
-    with pytest.raises(TuningError):
-        q.append("u", {}, window_id="w2")
-    (d / "w1.jsonl").chmod(0o644)
-    with pytest.raises(TuningError):
-        q.append("u", {}, window_id="w1")
-    with pytest.raises(TuningError):
-        q.list("w1")
-
-
-@tvl_free
-def test_queue_torn_tail_truncated_by_next_append(tmp_path):
-    d = tmp_path / "q"
-    q = LocalAuditQueue(d)
-    q.append("u1", {"a": 1}, window_id="w")
-    path = d / "w.jsonl"
-    with open(path, "ab") as fh:
-        fh.write(b'{"unit_id": "u2", "rec')
-    assert q.list("w") == [{"unit_id": "u1", "record": {"a": 1}}]
-    q.append("u3", {"c": 3}, window_id="w")
-    assert path.read_bytes().count(b"\n") == 2
-    assert q.list("w") == [
-        {"unit_id": "u1", "record": {"a": 1}},
-        {"unit_id": "u3", "record": {"c": 3}},
-    ]
-
-
-@tvl_free
-def test_queue_torn_only_line_truncated_to_empty(tmp_path):
-    d = tmp_path / "q"
-    q = LocalAuditQueue(d)
-    q.append("u1", {}, window_id="w")
-    path = d / "w.jsonl"
-    path.write_bytes(b'{"unit_id": "u')
-    q.append("u2", {}, window_id="w")
-    assert q.list("w") == [{"unit_id": "u2", "record": {}}]
-
-
-@tvl_free
-def test_queue_malformed_complete_line_raises(tmp_path):
-    d = tmp_path / "q"
-    q = LocalAuditQueue(d)
-    q.append("u1", {}, window_id="w")
-    with open(d / "w.jsonl", "ab") as fh:
-        fh.write(b"SECRET-NOT-JSON\n")
-    q.append("u3", {}, window_id="w")
-    with pytest.raises(TuningError) as info:
-        q.list("w")
-    assert info.value.code == E_INVALID_TUNING
-    assert "SECRET" not in str(info.value)
-
-
-@tvl_free
-def test_queue_append_holds_lock_around_write(tmp_path, monkeypatch):
-    events = []
-    real_write = os.write
-
-    @contextlib.contextmanager
-    def fake_lock(fd):
-        events.append("enter")
-        yield
-        events.append("exit")
-
-    def spy_write(fd, data):
-        events.append("write")
-        return real_write(fd, data)
-
-    monkeypatch.setattr(mod, "_locked", fake_lock)
-    monkeypatch.setattr(mod.os, "write", spy_write)
-    LocalAuditQueue(tmp_path / "q").append("u", {}, window_id="w")
-    assert events[0] == "enter" and events[-1] == "exit" and "write" in events[1:-1]
-
-
-@tvl_free
-def test_queue_list_refuses_symlinked_directory(tmp_path):
-    real = tmp_path / "real"
-    real.mkdir(mode=0o700)
-    LocalAuditQueue(real).append("u", {}, window_id="w")
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    with pytest.raises(TuningError):
-        LocalAuditQueue(link).list("w")
-
-
-@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX only")
-@tvl_free
-def test_queue_fifo_refused_without_hanging(tmp_path):
-    d = tmp_path / "q"
-    d.mkdir(mode=0o700)
-    os.mkfifo(d / "w.jsonl", 0o600)
-    q = LocalAuditQueue(d)
-    with pytest.raises(TuningError):
-        q.list("w")
-    with pytest.raises(TuningError):
-        q.append("u", {}, window_id="w")
-
-
-@tvl_free
 def test_verify_short_or_non_bytes_key_false():
     s = CommittedSampler("0.5", KEY, window_id="w")
     c = s.commitment()
@@ -392,20 +251,3 @@ def test_verify_short_or_non_bytes_key_false():
     )
     assert verify_sampling(c_short, short, [], []) is False
     assert verify_sampling(c, bytearray(KEY), [], []) is False
-
-
-@tvl_free
-def test_queue_writes_whole_line_with_os_write_loop(tmp_path, monkeypatch):
-    calls = []
-    real_write = os.write
-
-    def short_write(fd, data):
-        calls.append(len(data))
-        return real_write(fd, bytes(data)[:5])
-
-    monkeypatch.setattr(mod.os, "write", short_write)
-    q = LocalAuditQueue(tmp_path / "q")
-    q.append("u1", {"a": 1}, window_id="w")
-    monkeypatch.undo()
-    assert len(calls) > 1
-    assert q.list("w") == [{"unit_id": "u1", "record": {"a": 1}}]
