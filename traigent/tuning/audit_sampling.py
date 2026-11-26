@@ -58,7 +58,7 @@ def _threshold(rate: Decimal) -> int:
         return 1
     _, digits, exp = rate.as_tuple()
     assert isinstance(exp, int)
-    numerator = int("".join(map(str, digits)))
+    numerator = int(Decimal((0, digits, 0)))
     if exp >= 0:
         return int(numerator * 10**exp * 2**64)
     return int(-(-(numerator * 2**64) // 10**-exp))
@@ -124,7 +124,7 @@ class CommittedSampler:
         return SamplingCommitment(
             mode=SAMPLING_MODE,
             window_id=self._window_id,
-            rate=format(self._rate, "f"),
+            rate=str(self._rate),
             key_digest=hashlib.sha256(self._key).hexdigest(),
         )
 

@@ -333,3 +333,29 @@ def test_padded_rate_via_monitor_and_verify():
             mod.SAMPLING_MODE, "w", rate, hashlib.sha256(KEY).hexdigest()
         )
         assert verify_sampling(c, KEY, ids, kept)
+
+
+@tvl_free
+def test_rate_with_more_than_4300_digits_constructs_and_round_trips():
+    long_rate = "0." + "1" * 4301
+    s = CommittedSampler(long_rate, KEY, window_id="w")
+    ids = [f"u{i}" for i in range(20)]
+    kept = [u for u in ids if s.keep(u)]
+    assert verify_sampling(s.commitment(), KEY, ids, kept) is True
+
+
+@tvl_free
+def test_tiny_rate_commitment_is_short_and_round_trips():
+    s = CommittedSampler("1e-10000000", KEY, window_id="w")
+    c = s.commitment()
+    assert len(c.rate) < 50
+    ids = [f"u{i}" for i in range(20)]
+    kept = [u for u in ids if s.keep(u)]
+    assert verify_sampling(c, KEY, ids, kept) is True
+
+
+@tvl_free
+def test_commitment_rate_is_canonical_for_plain_and_padded_rates():
+    assert CommittedSampler("0.25", KEY, window_id="w").commitment().rate == "0.25"
+    padded = "0.5" + "0" * 1000
+    assert CommittedSampler(padded, KEY, window_id="w").commitment().rate == "0.5"
