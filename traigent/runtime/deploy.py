@@ -35,8 +35,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from traigent.config.project import PROJECT_CONTEXT_REQUIRED_MESSAGE
 from traigent.runtime import manifest
 from traigent.runtime.hosted import (
+    ProjectContextRequiredError,
     PublishResult,
     ReactiveClient,
     ReactiveError,
@@ -91,9 +93,19 @@ class DeployHold(RuntimeRequirementError):
     ``outcome`` is set when the outcome IS decided but could not be reported yet.
     """
 
-    def __init__(self, reason: str, outcome: DeployOutcome | None = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        outcome: DeployOutcome | None = None,
+        *,
+        ambiguous: bool = False,
+        guidance: str | None = None,
+    ) -> None:
         super().__init__(E_HOLD, reason)
+        if guidance:
+            self.args = (f"{self.args[0]}: {guidance}",)
         self.outcome = outcome
+        self.ambiguous = ambiguous
 
 
 def _publish_error_action(exc: ReactiveError) -> tuple[str, float | None]:
@@ -101,6 +113,8 @@ def _publish_error_action(exc: ReactiveError) -> tuple[str, float | None]:
         return "refused", None
     if exc.code == "publication_cancelled":
         return "cancelled", None
+    if isinstance(exc, ProjectContextRequiredError):
+        raise exc  # keep the fixed guidance text; a hold would reduce it to a code
     if not _retryable(exc):
         raise DeployHold(exc.code) from None
     return "retry", exc.retry_after
@@ -183,6 +197,9 @@ class DeployController:
         gate_result_digest: str,
     ) -> DeployOutcome:
         api = self.client
+        # An invalid explicit project fails here, before any reactive write, lease file
+        # or occurrence state change, so a corrected rerun is not blocked.
+        api.require_head_project()
         key = deploy_key(attempt_ref, candidate_fingerprint, gate_result_digest)
 
         cache = LeaseCache(
@@ -254,9 +271,18 @@ class DeployController:
         attempts = 0
         while True:
             attempts += 1
-            outcome, cancelled, retry_after = self._publish_once(
-                attempt_ref, key, best_config_id, version
-            )
+            try:
+                outcome, cancelled, retry_after = self._publish_once(
+                    attempt_ref, key, best_config_id, version
+                )
+            except ProjectContextRequiredError as exc:
+                if attempts == 1:
+                    raise  # nothing was sent that could have committed
+                raise DeployHold(
+                    exc.code,
+                    ambiguous=True,
+                    guidance=PROJECT_CONTEXT_REQUIRED_MESSAGE,
+                ) from None
             if outcome is not None:
                 return outcome
             if cancelled:
@@ -291,6 +317,13 @@ class DeployController:
             try:
                 result = self.client.finalize_publish(key)
             except ReactiveError as exc:
+                if isinstance(exc, ProjectContextRequiredError):
+                    # The publish may have committed: the outcome is unresolved.
+                    raise DeployHold(
+                        exc.code,
+                        ambiguous=True,
+                        guidance=PROJECT_CONTEXT_REQUIRED_MESSAGE,
+                    ) from None
                 if not _retryable(exc):
                     raise DeployHold(exc.code) from None
                 if attempt < self.max_attempts - 1:

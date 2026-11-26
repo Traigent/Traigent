@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -918,3 +919,286 @@ def test_the_project_pattern_is_the_vendored_contract_pattern() -> None:
     contract = params["schema"]["pattern"]
     assert contract.startswith("^") and contract.endswith("(?![\\s\\S])")
     assert hosted._PROJECT_ID == contract[1 : -len("(?![\\s\\S])")]
+
+
+# --- explicit project on the head and publish routes ---------------------------------------
+
+
+class _HeadRecorder:
+    accepts_headers = True
+
+    def __init__(self, status: int = 200, body: Any = None) -> None:
+        self.calls: list[tuple[str, str, Any]] = []
+        self.status, self.body = status, body
+
+    def __call__(
+        self, method: str, path: str, params: Any, body: Any, headers: Any = None
+    ) -> tuple[int, Any, dict[str, str]]:
+        self.calls.append((method, path, headers))
+        return self.status, self.body, {}
+
+
+_HEAD_KEY = f"deploy:attemptref_{'a' * 32}:{'b' * 64}:{'c' * 64}"
+_HEAD_CALLS = {
+    "config": lambda c: c.get_pinned_config(),
+    "publish": lambda c: c.publish_deploy(key=_HEAD_KEY, best_config_id="x", version=1),
+    "finalize": lambda c: c.finalize_publish(_HEAD_KEY),
+}
+
+
+def _head_client(rec: _HeadRecorder, **kw: Any) -> ReactiveClient:
+    from traigent.runtime.hosted import TokenMap
+
+    return ReactiveClient(
+        DIGEST, TokenMap(Path("/nonexistent-token-state")), transport=rec, **kw
+    )
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_send_the_configured_project_unchanged(
+    name: str, monkeypatch: Any
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(404, {})
+    client = _head_client(rec, project_id=REACTIVE_PROJECT)
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](client)
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_env_fallback(name: str, monkeypatch: Any) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    rec = _HeadRecorder(404, {})
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](_head_client(rec))
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_without_project_send_no_header_and_map_422(
+    name: str, monkeypatch: Any
+) -> None:
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(
+        422, {"success": False, "error_code": "PROJECT_CONTEXT_REQUIRED"}
+    )
+    client = _head_client(rec)  # the constructor never raises for a missing project
+    with pytest.raises(ProjectContextRequiredError) as err:
+        _HEAD_CALLS[name](client)
+    assert str(err.value) == (
+        "this call needs a project: set TRAIGENT_PROJECT_ID or use a project-bound key"
+    )
+    assert len(rec.calls) == 1
+    assert not rec.calls[0][2]  # no X-Project-Id
+
+
+def test_head_call_without_project_succeeds_when_backend_accepts(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    spec = {"config": {"temperature": 0.2}}
+    rec = _HeadRecorder(
+        200, {"schema_version": 1, "generation": 3, "version": 2, "spec": spec}
+    )
+    pinned = _head_client(rec).get_pinned_config()
+    assert (pinned.generation, pinned.version, pinned.spec) == (3, 2, spec)
+    assert len(rec.calls) == 1
+    assert rec.calls[0][2] is None  # no X-Project-Id, no headers argument at all
+
+
+def test_four_argument_transport_is_called_exactly_as_before_without_a_project(
+    monkeypatch: Any,
+) -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    seen: list[tuple[Any, ...]] = []
+
+    def four_arg(method: str, path: str, params: Any, body: Any) -> Any:
+        seen.append((method, path))
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    client = ReactiveClient(
+        DIGEST, TokenMap(Path("/nonexistent-token-state")), transport=four_arg
+    )
+    assert client.get_pinned_config().generation == 1
+    assert seen == [("GET", f"/api/v1/best-configs/agent-heads/{DIGEST}/config")]
+
+
+def test_a_list_error_code_is_not_a_project_context_refusal() -> None:
+    from traigent.config.project import is_project_context_required
+
+    for bad in (["PROJECT_CONTEXT_REQUIRED"], {"a": 1}, None, 5):
+        assert is_project_context_required(422, {"error_code": bad}) is False
+
+
+@pytest.mark.parametrize(
+    "bad", ["legacy.id\r\n", "legacy.id\n", "\tlegacy.id", "\rlegacy.id", "a\tb"]
+)
+def test_control_characters_are_refused_before_the_trim(bad: str) -> None:
+    from traigent.config.project import project_header_for
+
+    def boom() -> Exception:
+        return ValueError("blank")
+
+    with pytest.raises(ValueError):
+        project_header_for(bad, boom)
+    assert project_header_for("  legacy.id  ", boom) == {"X-Project-Id": "legacy.id"}
+
+
+def test_deploy_controller_keeps_the_project_guidance_text() -> None:
+    from traigent.runtime.deploy import _publish_error_action
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    with pytest.raises(ProjectContextRequiredError) as err:
+        _publish_error_action(ProjectContextRequiredError(status=422))
+    assert "TRAIGENT_PROJECT_ID" in str(err.value)
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_head_calls_explicit_blank_raises_before_transport(
+    name: str, blank: str, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("TRAIGENT_PROJECT_ID", REACTIVE_PROJECT)
+    rec = _HeadRecorder()
+    client = _head_client(rec, project_id=blank)
+    with pytest.raises(RuntimeRequirementError) as err:
+        _HEAD_CALLS[name](client)
+    assert err.value.path == "project_id"
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_send_legacy_project_default_unchanged(
+    name: str, monkeypatch: Any
+) -> None:
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(404, {})
+    with pytest.raises(RuntimeRequirementError):
+        _HEAD_CALLS[name](_head_client(rec, project_id="project_default"))
+    assert [h for *_x, h in rec.calls] == [{"X-Project-Id": "project_default"}]
+
+
+@pytest.mark.parametrize("name", list(_HEAD_CALLS))
+def test_head_calls_control_character_project_raises_before_transport(
+    name: str,
+) -> None:
+    rec = _HeadRecorder()
+    with pytest.raises(RuntimeRequirementError) as err:
+        _HEAD_CALLS[name](_head_client(rec, project_id="p\nX-Evil: 1"))
+    assert "Evil" not in str(err.value)
+    assert rec.calls == []
+
+
+@pytest.mark.parametrize(
+    "code", ["PROJECT_CONTEXT_REQUIRED", "PROJECT_CONTEXT_REQUIRED_FOR_WRITE"]
+)
+def test_head_call_maps_both_project_context_codes(code: str, monkeypatch: Any) -> None:
+    from traigent.runtime.hosted import ProjectContextRequiredError
+
+    monkeypatch.delenv("TRAIGENT_PROJECT_ID", raising=False)
+    rec = _HeadRecorder(422, {"error_code": code})
+    with pytest.raises(ProjectContextRequiredError):
+        _head_client(rec).get_pinned_config()
+    assert len(rec.calls) == 1
+
+
+def test_four_argument_transport_works_when_a_project_is_configured() -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    seen: list[tuple[Any, ...]] = []
+
+    def four_arg(method: str, path: str, params: Any, body: Any) -> Any:
+        seen.append((method, path))
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=four_arg,
+    )
+    assert client.get_pinned_config().generation == 1  # no header, no TypeError
+    assert len(seen) == 1
+
+
+def test_wrapped_four_argument_transport_not_opted_in_is_called_with_four_args() -> (
+    None
+):
+    from traigent.runtime.hosted import TokenMap
+
+    def inner(method: str, path: str, params: Any, body: Any) -> Any:
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    seen: list[tuple[Any, ...]] = []
+
+    @functools.wraps(inner)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        seen.append((args, kwargs))
+        return inner(*args, **kwargs)
+
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=wrapper,
+    )
+    assert client.get_pinned_config().generation == 1
+    assert len(seen) == 1
+    assert len(seen[0][0]) == 4
+    assert seen[0][1] == {}
+
+
+def test_opted_in_transport_gets_the_header_by_keyword() -> None:
+    from traigent.runtime.hosted import TokenMap
+
+    got: list[Any] = []
+
+    def opted(
+        method: str, path: str, params: Any, body: Any, headers: Any = None
+    ) -> Any:
+        got.append(headers)
+        return 200, {"schema_version": 1, "generation": 1, "version": 1, "spec": {}}, {}
+
+    opted.accepts_headers = True  # type: ignore[attr-defined]
+    ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+        transport=opted,
+    ).get_pinned_config()
+    assert got == [{"X-Project-Id": REACTIVE_PROJECT}]
+
+
+def test_default_transport_sends_the_project_header(monkeypatch: Any) -> None:
+    from traigent.runtime import hosted
+    from traigent.runtime.hosted import TokenMap
+
+    sent: list[Any] = []
+
+    class _FakeHttp:
+        origin = "https://example.invalid"
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def send(self, method: str, url: str, body: Any, **kw: Any) -> Any:
+            sent.append(kw.get("extra_headers"))
+            return (
+                200,
+                {"schema_version": 1, "generation": 1, "version": 1, "spec": {}},
+                {},
+            )
+
+    monkeypatch.setattr(hosted, "RuntimeClient", _FakeHttp)
+    client = ReactiveClient(
+        DIGEST,
+        TokenMap(Path("/nonexistent-token-state")),
+        project_id=REACTIVE_PROJECT,
+    )
+    assert client.get_pinned_config().generation == 1
+    assert sent == [{"X-Project-Id": REACTIVE_PROJECT}]

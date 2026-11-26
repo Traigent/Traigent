@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from urllib.parse import quote
 
 from traigent.config.tenant import read_optional_env
@@ -62,3 +63,54 @@ def apply_project_header(
     resolved = explicit or read_optional_project_env()
     if resolved:
         headers[PROJECT_HEADER] = resolved
+
+
+PROJECT_CONTEXT_REQUIRED_CODES = frozenset(
+    {"PROJECT_CONTEXT_REQUIRED", "PROJECT_CONTEXT_REQUIRED_FOR_WRITE"}
+)
+PROJECT_CONTEXT_REQUIRED_MESSAGE = (
+    "this call needs a project: set TRAIGENT_PROJECT_ID or use a project-bound key"
+)
+
+
+def project_header_for(
+    explicit: object, blank_error: Callable[[], Exception]
+) -> dict[str, str]:
+    """The ONE place that decides the ``X-Project-Id`` of a flat best-config/deploy call.
+
+    ``explicit`` is the client's own project (argument or attribute).  ``None`` means
+    "not given" and reads ``TRAIGENT_PROJECT_ID``.  An explicitly passed blank (or a
+    non-string, or one with control characters) raises ``blank_error()`` before any request and never falls back.
+    With no project configured the result is empty: no header is sent and the backend
+    decides (a project-bound key succeeds).  A configured project is sent exactly as
+    configured (surrounding whitespace trimmed), never empty, never another id.
+    """
+    if explicit is None:
+        resolved = read_optional_project_env() or ""
+        if not resolved:
+            return {}
+        raw = resolved
+    elif isinstance(explicit, str):
+        raw = explicit
+    else:
+        raise blank_error()
+    # No shape check: the backend accepts more shapes than the reactive paths do.
+    # Only an empty value or a header-unsafe one (control characters, checked on the
+    # raw value BEFORE trimming, so a trailing CR/LF/TAB is refused) is rejected.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise blank_error()
+    resolved = raw.strip()
+    if not resolved:
+        raise blank_error()
+    return {PROJECT_HEADER: resolved}
+
+
+def is_project_context_required(status: int, body: object) -> bool:
+    """True for a 422 whose top-level ``error_code`` is a project-context code.
+
+    Only the status and the code are read, never a message or error text.
+    """
+    if status != 422 or not isinstance(body, dict):
+        return False
+    code = body.get("error_code")
+    return isinstance(code, str) and code in PROJECT_CONTEXT_REQUIRED_CODES
