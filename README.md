@@ -8,7 +8,9 @@
   <a href="https://github.com/Traigent/Traigent/blob/main/docs/getting-started/GETTING_STARTED.md"><img src="https://img.shields.io/badge/docs-getting%20started-brightgreen.svg" alt="Docs"></a>
 </p>
 
-**Traigent is an AI Agent infrastructure that allows companies to take AI agents out of the lab and deploy them at high scale with high confidence.**
+**Tune your AI agent for accuracy and cost, with proof before you ship.**
+
+Traigent tests model and parameter configurations on your eval dataset. Set accuracy and cost as objectives to compare the trade-off.
 
 Our mission: **Anything you can measure, we can improve.** Whether it's accuracy, speed of response, cost, or any other business metric — we bring strong results that deliver real business value.
 
