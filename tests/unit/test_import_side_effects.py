@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -180,3 +182,92 @@ def test_cost_calculator_honors_user_opt_out_of_local_cost_map():
     combined = f"{result.stdout}\n{result.stderr}"
     assert result.returncode == 0, combined
     assert "LITELLM_LOCAL_MODEL_COST_MAP=false" in result.stdout, combined
+
+
+# --- litellm pricing-map pin, checked against litellm's own report -----------
+# litellm fetches its pricing map at import through a native client that Python
+# socket patches cannot see, so these tests ask litellm where its map came from
+# instead of watching the network. They complement the cost_calculator tests
+# above (second pin) by covering the pin set by ``import traigent`` itself.
+
+_PIN_VARS = ("LITELLM_LOCAL_MODEL_COST_MAP", "LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS")
+
+_PIN_PROBE = f"""
+import json, os
+import traigent
+import litellm
+from litellm.litellm_core_utils.get_model_cost_map import (
+    get_model_cost_map_source_info,
+)
+print("PROBE:" + json.dumps({{
+    "traigent_file": traigent.__file__,
+    "env": {{k: os.environ.get(k) for k in {_PIN_VARS!r}}},
+    "source": get_model_cost_map_source_info(),
+}}))
+"""
+
+
+def _probe_litellm_pin(tmp_path: Path, extra_env: dict[str, str]) -> dict:
+    repo_root = Path(__file__).resolve().parents[2]
+    # Bound but never listening: connects to this port are refused every time,
+    # so even a broken pin cannot reach the internet from this test.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as dead:
+        dead.bind(("127.0.0.1", 0))
+        dead_url = f"http://127.0.0.1:{dead.getsockname()[1]}"
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(tmp_path),
+            "PYTHONPATH": str(repo_root),
+            # No checkout or home .env may mask a missing pin. python-dotenv's
+            # PYTHON_DOTENV_DISABLED (dotenv/main.py: _load_dotenv_disabled,
+            # honoured at the top of load_dotenv) turns off both Traigent's and
+            # litellm's .env loading without taking the SDK's TRAIGENT_SKIP_DOTENV
+            # branch, so the ordinary import path is what runs.
+            "PYTHON_DOTENV_DISABLED": "1",
+            # Dead map URL and proxies for every case (litellm checks the
+            # forcing env var before the URL, so pin detection is unaffected).
+            "LITELLM_MODEL_COST_MAP_URL": f"{dead_url}/x.json",
+            "HTTP_PROXY": dead_url,
+            "HTTPS_PROXY": dead_url,
+            "ALL_PROXY": dead_url,
+            "NO_PROXY": "",
+            **extra_env,
+        }
+        proc = subprocess.run(
+            [sys.executable, "-c", _PIN_PROBE],
+            env=env,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    assert proc.returncode == 0, f"probe failed:\n{proc.stderr[-2000:]}"
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith("PROBE:")]
+    assert lines, f"no probe output:\n{proc.stdout[-1000:]}\n{proc.stderr[-1000:]}"
+    result = json.loads(lines[-1][len("PROBE:") :])
+    # The worktree copy, not an installed one, is what was tested.
+    assert (
+        Path(result["traigent_file"]).resolve()
+        == (repo_root / "traigent" / "__init__.py").resolve()
+    )
+    return result
+
+
+def test_import_traigent_pins_litellm_to_local_cost_map(tmp_path: Path) -> None:
+    result = _probe_litellm_pin(tmp_path, {})
+    for name in _PIN_VARS:
+        assert result["env"][name] == "True", f"{name} not pinned by import traigent"
+    assert result["source"]["source"] == "local"
+    assert result["source"]["is_env_forced"] is True
+
+
+def test_live_prices_opt_out_leaves_litellm_pin_unset(tmp_path: Path) -> None:
+    result = _probe_litellm_pin(tmp_path, {"TRAIGENT_LITELLM_LIVE_PRICES": "1"})
+    for name in _PIN_VARS:
+        assert result["env"][name] is None, f"{name} set despite live-prices opt-out"
+    source = result["source"]
+    assert source["is_env_forced"] is False
+    # litellm tried the remote path: it names the dead URL and why it fell back.
+    assert source["url"].endswith("/x.json")
+    assert source["fallback_reason"]
