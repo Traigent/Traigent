@@ -435,6 +435,7 @@ def _assert_old_state_only(auth: Any) -> None:
 
 def test_jwt_refresh_on_flagged_manager_that_cannot_latch_drops_old_state_and_emits_nothing(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     # The server already consumed the old refresh token, so a failed latch must not
     # keep it (it would be resent): the manager invalidates its refresh state, and the
@@ -459,6 +460,16 @@ def test_jwt_refresh_on_flagged_manager_that_cannot_latch_drops_old_state_and_em
     # token; delenv drops the env fallback), so re-authentication has nothing to
     # authenticate with and must not be able to send a request.
     monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    # Hermetic: no stored CLI key or development key on this machine can feed re-auth.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+        staticmethod(lambda *_a, **_k: None),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+        staticmethod(lambda *_a, **_k: None),
+    )
     auth.set_api_key(None)
     assert auth._provided_credentials is None
     with capture_egress() as cap:
