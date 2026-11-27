@@ -16,11 +16,9 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   example, a rerun that returns nothing) can debit zero. Across overlapping optimization calls the cap is
   not guaranteed: each run takes its own sample pool from the shared remaining count
   and debits afterwards.
-- **The wall-clock deadline is checked at trial boundaries.** The search can await a
-  configuration and start evaluating it without rechecking, and a running trial (for
-  example a deadlocked sampler or stuck provider call) is cancelled only after the
-  orchestrator's watchdog grace (25% of the remaining budget, floored at ``1s``,
-  capped at ``5min``), so the deadline can be overrun by a trial.
+- **The wall-clock deadline is checked between trials.** A trial already running is
+  not interrupted and can run past it, and for a synchronous trial the worker can
+  keep running after the run stops waiting.
 - **The monetary cap is enforced at batch/trial boundaries, not per token.** The
   orchestrator checks the shared remaining in its pre-batch admission gate before
   each batch and in the stop condition between trials. In *parallel* mode a batch of

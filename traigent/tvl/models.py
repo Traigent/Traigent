@@ -661,8 +661,8 @@ class ExplorationBudgets:
     Attributes:
         max_trials: Maximum number of trials permitted.
         max_spend_usd: Planned spend limit in USD; actual spend can exceed it.
-        max_wallclock_s: Wall-clock limit in seconds, used as the run timeout; a
-            running trial can overrun it before the watchdog cancels it.
+        max_wallclock_s: Wall-clock limit in seconds. It sets the run's default
+            timeout; an explicit runtime timeout overrides it.
     """
 
     max_trials: int | None = None

@@ -3550,8 +3550,9 @@ def optimize(  # NOSONAR(S107)
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.
-                Setting it explicitly also counts as consent to run trials
-                whose cost cannot be measured (see "Cost safeguards"), but it
+                In a local run, setting it explicitly also counts as consent
+                to run trials whose cost cannot be measured (see "Cost
+                safeguards"), but it
                 does not raise ``max_trials``. When passed to ``.optimize()``
                 it is kept on the function object for later calls.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
@@ -3568,25 +3569,19 @@ def optimize(  # NOSONAR(S107)
                 ``cost_approved=True`` without a Python ``cost_limit`` uses
                 $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
                 TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
-                cannot bound spend it cannot see. A trial's cost is
-                unmeasured when no LLM usage was captured, or captured tokens
-                have no matching rate and no cost was reported (an explicit
-                zero, or a positive provider-reported or user-supplied cost,
-                counts as measured). With an explicit cost limit, a
-                non-failed trial with unmeasured cost raises
-                ``CostTrackingRequiredError``. With the inherited default
-                limit, the run continues, unless strict cost accounting raises
-                or known spend reaches the limit first, and otherwise stops at
-                a default safety limit of 10 trials
-                (TRAIGENT_FALLBACK_TRIAL_LIMIT) with
-                ``stop_reason == "cost_limit"`` and warning
-                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. For a local
+                cannot bound spend it cannot see. A trial whose cost cannot
+                be fully measured is treated as unmeasured. With an explicit
+                cost limit, that raises ``CostTrackingRequiredError``. With the
+                inherited default limit, the run may stop early after a number
+                of such trials (``stop_reason == "cost_limit"``, warning
+                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``). For a local
                 optimization, passing ``max_trials`` explicitly (here or to
-                ``.optimize()``) waives that fallback and runs up to that many
-                trials, with warning ``COST_UNMEASURED_TRIALS_RAN``;
+                ``.optimize()``) waives that early stop, with warning
+                ``COST_UNMEASURED_TRIALS_RAN``; in a local run
                 ``max_total_examples`` also counts as consent but does not
                 raise ``max_trials``. Managed optimization can still apply the
-                fallback with explicit sizing. ``max_trials=None`` does not count.
+                early stop. ``max_trials=None`` does not count. See
+                docs/user-guide/cost_capture.md.
                 The limit is enforced between trials, not inside one: a
                 single expensive trial can overshoot it by roughly that
                 trial's cost (plus in-flight parallel trials) before the next

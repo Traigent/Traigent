@@ -732,7 +732,7 @@ def test_default_sized_unmeasured_run_stops_at_the_safety_limit(
         "stopped at the default safety limit of 10 trials",
         "Set max_trials explicitly on @traigent.optimize or .optimize() to run "
         "more trials",
-        "max_total_examples caps the total examples and also counts as your "
+        "In a local run, max_total_examples caps the total examples and also counts as your "
         "explicit consent, but does not raise max_trials",
         ".invoke/.ainvoke (.abatch is captured through .ainvoke)",
         "docs/user-guide/cost_capture.md",
