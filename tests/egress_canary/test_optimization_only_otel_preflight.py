@@ -22,6 +22,14 @@ from .test_optimization_only_egress import _env
 
 pytestmark = pytest.mark.backend_online
 
+# A privacy test must fail loudly, never skip, when its exporter extra is missing.
+import importlib.util  # noqa: E402
+
+assert importlib.util.find_spec("opentelemetry.exporter.otlp.proto.http"), (
+    "opentelemetry-exporter-otlp-proto-http is not installed; "
+    "install the 'tracing' extra (pip install 'traigent[tracing]')"
+)
+
 OTLP_BASE = f"{BACKEND_URL}/api/v1beta/observability/otlp"
 RESTRICTED = {"valid": True, "optimization_only": True}
 
