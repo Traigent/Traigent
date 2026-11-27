@@ -8,8 +8,10 @@ All data sent is privacy-safe and contains no sensitive information.
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Performance FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
 import asyncio
+import concurrent.futures
 import logging
 import os
+import threading
 import time
 import uuid
 import warnings
@@ -54,6 +56,8 @@ _FIRST_USE_FILENAME = ".first_use"
 # Local session ids start with %Y%m%d_%H%M%S_%f (LocalStorageManager.create_session).
 _SESSION_ID_TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
 _SESSION_ID_TIME_LENGTH = 22
+# Extra wait for the collector thread beyond its own budget before giving up.
+_SUBMIT_SCAN_MARGIN_SECONDS = 1.0
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
@@ -226,7 +230,11 @@ class LocalAnalytics:
                         names.append(entry.name[: -len(".json")])
         except OSError:
             pass
-        names.sort(reverse=True)
+        # Timestamp ids newest-first, then ids that do not encode a time.
+        timed = sorted((n for n in names if self._session_id_time(n)), reverse=True)
+        untimed = sorted(n for n in names if not self._session_id_time(n))
+        all_parsed = not untimed
+        names = timed + untimed
         sessions: list[Any] = []
         read_fully = enumerated_fully
         for name in names:
@@ -241,11 +249,14 @@ class LocalAnalytics:
             "names": names,
             "enumerated_fully": enumerated_fully,
             "read_fully": read_fully,
+            "all_parsed": all_parsed,
         }
 
     def _session_improvement(self, session: Any) -> Any:
         """Improvement of the session already in memory (no second file read);
         the same computation as ``LocalStorageManager.get_session_summary``."""
+        if not session.trials:
+            return None
         return relative_change(
             session.baseline_score,
             session.best_score,
@@ -256,14 +267,15 @@ class LocalAnalytics:
         """Collect privacy-safe aggregated usage statistics.
 
         Args:
-            time_budget: Optional cap in seconds on reading session files. When
-                the cap is hit, ``total_sessions`` is still the file count and
-                ``days_since_first_use`` comes from the session ids, but every
+            time_budget: Optional cap in seconds on the scan. When the cap is
+                hit, ``total_sessions`` is the file count (if the listing
+                itself was cut short: the number of names seen) and
+                ``days_since_first_use`` comes from the session ids. Every
                 other aggregate (completed/failed counts, trials, functions,
-                config-space and improvement averages) is computed from a
-                newest-first sample of the sessions read in time.
-                ``sessions_last_30_days`` is exact whenever the recent sessions
-                fit in the budget.
+                config-space and improvement averages) is computed from the
+                sessions read in time: ids that encode a timestamp
+                newest-first, then ids that do not. ``sessions_last_30_days``
+                is exact whenever the recent sessions fit in the budget.
 
         Returns:
             Dictionary containing aggregated, non-sensitive stats
@@ -280,7 +292,9 @@ class LocalAnalytics:
             else:
                 scan = self._scan_sessions(time_budget)
                 sessions = scan["sessions"]
-                persist_first_use = scan["enumerated_fully"]
+                persist_first_use = scan["enumerated_fully"] and (
+                    scan["read_fully"] or scan["all_parsed"]
+                )
                 if not scan["read_fully"]:
                     truncated_total = len(scan["names"])
                 first_use_candidates = [
@@ -374,21 +388,31 @@ class LocalAnalytics:
         return Path(self.storage.storage_path) / _FIRST_USE_FILENAME
 
     def _write_first_use(self, first_use: datetime) -> None:
-        """Atomic write (temp file + os.replace); never writes through a symlink."""
+        """Atomic write: unique temp file (O_EXCL, O_NOFOLLOW) then os.replace;
+        never through a symlink; a concurrent writer is tolerated."""
         target = self._first_use_file()
         if target.is_symlink():
             logger.debug("Refusing to write first-use time through a symlink")
             return
         tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(first_use.isoformat())
+            fd = os.open(
+                tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            )
+            with os.fdopen(fd, "w") as handle:
+                handle.write(first_use.isoformat())
             os.replace(tmp, target)
-        except Exception as e:  # a concurrent writer or read-only dir is fine
+        except Exception as e:
             logger.debug(f"Could not save first-use time: {e}")
             try:
                 tmp.unlink()
             except OSError:
                 pass
+
+    def _read_first_use(self) -> str:
+        fd = os.open(self._first_use_file(), os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as handle:
+            return handle.read().strip()
 
     def _get_days_since_first_use(
         self,
@@ -402,9 +426,8 @@ class LocalAnalytics:
         or else a full scan, and then stored so later calls never scan.
         """
         try:
-            first_use_file = self._first_use_file()
             try:
-                first_use = datetime.fromisoformat(first_use_file.read_text().strip())
+                first_use = datetime.fromisoformat(self._read_first_use())
                 if first_use.tzinfo is None:
                     first_use = first_use.replace(tzinfo=UTC)
                 return max((datetime.now(UTC) - first_use).days, 0)
@@ -440,19 +463,13 @@ class LocalAnalytics:
             return {"success": False, "reason": "Submission not due yet"}
         return None
 
-    def _send_ineligibility(
-        self, force: bool
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        """The single send-eligibility check, in the same order and with the same
-        conditions as ``submit_usage_stats`` on develop: the submission skip
-        gate, the API-key check, then ``may_send_telemetry``.
+    def _credentials_refusal(self) -> tuple[dict[str, Any] | None, str | None]:
+        """The checks develop runs after collecting stats and before building
+        the client: API-key read, ``_analytics_api_key_error``, then
+        ``may_send_telemetry`` (origin/develop local_analytics.py 327-332).
 
-        Returns ``(refusal_result, api_key)``; ``refusal_result`` is None when
-        sending is allowed.
+        Returns ``(refusal_result, api_key)``.
         """
-        skipped = self._submission_skip_result(force)
-        if skipped is not None:
-            return skipped, None
         try:
             from traigent.config.backend_config import BackendConfig
 
@@ -467,6 +484,37 @@ class LocalAnalytics:
             return {"success": False, "reason": "Analytics disabled"}, None
         return None, api_key
 
+    async def _collect_stats_off_loop(self, budget: float) -> dict[str, Any] | None:
+        """Run collection on a dedicated daemon thread (not the default executor,
+        which ``asyncio.run`` joins at shutdown). Returns None if it overran
+        ``budget`` plus a margin; the abandoned daemon thread cannot block exit.
+        """
+        result: concurrent.futures.Future[dict[str, Any]] = concurrent.futures.Future()
+
+        def work() -> None:
+            try:
+                outcome = self.collect_usage_stats(budget)
+            except BaseException as exc:  # hand any failure back to the caller
+                try:
+                    result.set_exception(exc)
+                except concurrent.futures.InvalidStateError:
+                    pass
+                return
+            try:
+                result.set_result(outcome)
+            except concurrent.futures.InvalidStateError:
+                pass  # the caller already gave up
+
+        threading.Thread(target=work, name="traigent-usage-stats", daemon=True).start()
+        try:
+            return await asyncio.wait_for(
+                asyncio.wrap_future(result),
+                timeout=budget + _SUBMIT_SCAN_MARGIN_SECONDS,
+            )
+        except TimeoutError:
+            logger.debug("Usage stats collection timed out; skipping this submission")
+            return None
+
     async def submit_usage_stats(self, force: bool = False) -> dict[str, Any]:
         """Submit usage statistics using existing backend session infrastructure.
 
@@ -478,30 +526,31 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
-        # Eligibility runs before any session file is read.
-        refusal, _ = self._send_ineligibility(force)
+        # Develop's pre-collect check (origin/develop 312), unchanged.
+        skipped = self._submission_skip_result(force)
+        if skipped is not None:
+            return skipped
+
+        # Only to avoid a scan whose send would be refused anyway; the
+        # after-collect run below is the authoritative one.
+        refusal, _ = self._credentials_refusal()
         if refusal is not None:
             return refusal
 
-        # Off the event loop, so the caller's wait_for can fire; time-boxed so
-        # the worker thread also stops soon after (asyncio.run joins it).
-        stats = await asyncio.to_thread(
-            self.collect_usage_stats, _SUBMIT_SCAN_BUDGET_SECONDS
-        )
+        stats = await self._collect_stats_off_loop(_SUBMIT_SCAN_BUDGET_SECONDS)
+        if stats is None:
+            return {"success": False, "reason": "Request timeout"}
         if not stats:
             return {"success": False, "reason": "No stats to submit"}
 
-        # Conditions can change while collecting: evaluate again at send time.
-        refusal, api_key = self._send_ineligibility(force)
-        if refusal is not None:
-            return refusal
-
         try:
+            # Import backend client lazily to avoid circular imports
             from traigent.cloud import backend_client as backend_client_module
             from traigent.config.backend_config import BackendConfig
 
-            if not may_send_telemetry():
-                return {"success": False, "reason": "Analytics disabled"}
+            refusal, api_key = self._credentials_refusal()
+            if refusal is not None:
+                return refusal
             backend_client = backend_client_module.get_backend_client(
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),

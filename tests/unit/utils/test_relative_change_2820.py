@@ -79,7 +79,7 @@ def test_average_improvement_keeps_a_zero_average(tmp_path) -> None:
     from unittest.mock import patch
 
     from traigent.config.types import ExecutionMode, TraigentConfig
-    from traigent.storage.local_storage import OptimizationSession
+    from traigent.storage.local_storage import OptimizationSession, TrialResult
     from traigent.utils.local_analytics import LocalAnalytics
 
     analytics = LocalAnalytics(
@@ -102,6 +102,9 @@ def test_average_improvement_keeps_a_zero_average(tmp_path) -> None:
             completed_trials=1,
             baseline_score=1.0,
             best_score=1.0,
+            trials=[
+                TrialResult(trial_id=1, config={}, score=1.0, timestamp="2026-01-01")
+            ],
         )
     ]
     with patch.object(analytics.storage, "list_sessions", return_value=sessions):
