@@ -10,6 +10,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `@traigent.optimize(crew=..., role=...)` declares which crew and role an agent plays. Both are required together, are validated locally (crew: 1-128 characters of `A-Z a-z 0-9 _ -`; role: 1-128 characters) and cannot be combined with `agents=`. They are sent only as session metadata `crew_declaration` on session create, never in spans, logs, telemetry or local result files. `func.crew_binding` exposes the backend's closed answer (`status` plus ids); an older backend or an offline run reads `unknown`. A conflict with portal membership logs one fixed warning.
 
+### Changed
+
+- Since 0.34.0, running the keyless quickstart inside CI requires the same approval as any other run: set `TRAIGENT_RUN_APPROVED=1` (optionally `TRAIGENT_APPROVED_BY`). 0.34.0 shipped this change without a note.
+
 ## [0.34.2] - 2026-11-24
 
 ### Breaking
