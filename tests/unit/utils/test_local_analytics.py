@@ -1323,6 +1323,11 @@ class TestSubmitDoesNotStallEventLoop:
     @pytest.fixture(autouse=True)
     def _fresh_collector_slot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # An abandoned collector from an earlier test must not block this one.
+        import traigent.utils.local_analytics as module
+
+        leftover = module._COLLECTOR_THREAD
+        if leftover is not None:
+            leftover.join(timeout=2.5)
         monkeypatch.setattr("traigent.utils.local_analytics._COLLECTOR_THREAD", None)
 
     @staticmethod

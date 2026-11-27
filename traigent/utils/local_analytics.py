@@ -63,6 +63,16 @@ _COLLECTOR_LOCK = threading.Lock()
 _COLLECTOR_THREAD: threading.Thread | None = None
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
+
+def _reset_collector_after_fork() -> None:
+    global _COLLECTOR_LOCK, _COLLECTOR_THREAD
+    _COLLECTOR_LOCK = threading.Lock()
+    _COLLECTOR_THREAD = None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_collector_after_fork)
+
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
 _BACKGROUND_ANALYTICS_TASKS: set[asyncio.Task[Any]] = set()
@@ -269,6 +279,7 @@ class LocalAnalytics:
             "enumerated_fully": enumerated_fully,
             "read_fully": read_fully,
             "all_parsed": all_parsed,
+            "stamps": {name: stamp for stamp, name in timed_pairs},
         }
 
     def _session_improvement(self, session: Any) -> Any:
@@ -316,14 +327,13 @@ class LocalAnalytics:
                 )
                 if not scan["read_fully"]:
                     truncated_total = len(scan["names"])
-                first_use_candidates = [
-                    t for t in map(self._session_id_time, scan["names"]) if t
-                ]
+                stamps: dict[str, datetime] = scan["stamps"]
+                first_use_candidates = list(stamps.values())
                 # Ids that do not encode a time fall back to the sample.
                 first_use_candidates += [
                     datetime.fromisoformat(x.created_at)
                     for x in sessions
-                    if self._session_id_time(x.session_id) is None
+                    if x.session_id not in stamps
                 ]
             completed_sessions = [
                 s for s in sessions if s.status == OptimizationStatus.COMPLETED.value
@@ -427,6 +437,8 @@ class LocalAnalytics:
                 pass
 
     def _read_first_use(self) -> str:
+        if not _O_NOFOLLOW and os.path.islink(self._first_use_file()):
+            raise OSError("first-use file is a symlink")
         fd = os.open(self._first_use_file(), os.O_RDONLY | _O_NOFOLLOW)
         with os.fdopen(fd) as handle:
             return handle.read().strip()
@@ -523,15 +535,16 @@ class LocalAnalytics:
             except concurrent.futures.InvalidStateError:
                 pass  # the caller already gave up
 
+        thread = threading.Thread(target=work, name="traigent-usage-stats", daemon=True)
         with _COLLECTOR_LOCK:
-            if _COLLECTOR_THREAD is not None and _COLLECTOR_THREAD.is_alive():
-                logger.debug("Previous usage stats collection still running; skipping")
-                return None
-            thread = threading.Thread(
-                target=work, name="traigent-usage-stats", daemon=True
-            )
-            _COLLECTOR_THREAD = thread
-            thread.start()
+            current = _COLLECTOR_THREAD
+            alive = current is not None and current.is_alive()
+            if not alive:
+                _COLLECTOR_THREAD = thread
+        if alive:
+            logger.debug("Previous usage stats collection still running; skipping")
+            return None
+        thread.start()
         try:
             return await asyncio.wait_for(
                 asyncio.wrap_future(result),
