@@ -820,17 +820,28 @@ def child_env(
                 "unsupported: the workload sets LITELLM_MODEL_COST_MAP_URL"
             )
         env[_PRICING_ENV] = pricing_url
+
     # Loopback (the backend stub, the pricing listener) must bypass proxies.
-    # Each spelling is handled on its own: append to its value unless that
-    # value is exactly "*" (appending would break the wildcard for urllib).
-    for name in ("NO_PROXY", "no_proxy"):
-        current = env.get(name, "").strip()
-        if current == "*":
-            continue
-        entries = [item.strip() for item in current.split(",") if item.strip()]
+    # With one spelling set, compute its new value and mirror it to both (urllib
+    # prefers lowercase, so a synthesized lowercase value would shadow the
+    # user's uppercase one). With both set, handle each on its own. A value of
+    # exactly "*" is never appended to (that would break the wildcard).
+    def _with_loopback(value: str) -> str:
+        value = value.strip()
+        if value == "*":
+            return value
+        entries = [item.strip() for item in value.split(",") if item.strip()]
         if "127.0.0.1" not in entries:
             entries.append("127.0.0.1")
-        env[name] = ",".join(entries)
+        return ",".join(entries)
+
+    upper, lower = env.get("NO_PROXY"), env.get("no_proxy")
+    if upper is not None and lower is not None:
+        env["NO_PROXY"], env["no_proxy"] = _with_loopback(upper), _with_loopback(lower)
+    else:
+        env["NO_PROXY"] = env["no_proxy"] = _with_loopback(
+            upper if upper is not None else (lower or "")
+        )
     return env
 
 

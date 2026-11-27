@@ -58,3 +58,24 @@ def test_probe_leaves_the_workload_bytecode_cache_untouched(
     )
     behaviour_audit.resolve_litellm_pricing_url(workload_env, str(tmp_path))
     assert not cache.exists() or not any(cache.rglob("*"))
+
+
+def test_uppercase_only_no_proxy_is_mirrored_to_both_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _child_env(monkeypatch, NO_PROXY="corp.example")
+    assert env["NO_PROXY"] == env["no_proxy"] == "corp.example,127.0.0.1"
+
+
+def test_lowercase_only_no_proxy_is_mirrored_to_both_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _child_env(monkeypatch, no_proxy="corp.example")
+    assert env["NO_PROXY"] == env["no_proxy"] == "corp.example,127.0.0.1"
+
+
+def test_uppercase_only_star_stays_star_in_both_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _child_env(monkeypatch, NO_PROXY="*")
+    assert env["NO_PROXY"] == env["no_proxy"] == "*"
