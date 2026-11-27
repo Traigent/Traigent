@@ -2,8 +2,11 @@
 
 leak_manifest.json pins leak *identities* (route, location, field_path,
 canary kind), not counts: a leak that moves to another field or location on
-the same route is a removal plus an addition and fails.  register only
-shrinks; each removal needs an entry in leak_dispositions.json.
+the same route is a removal plus an addition and fails. Each removal needs
+an entry in leak_dispositions.json. Each ``ROUTE_MOVES`` entry is a reviewed
+assertion that both routes serve the same operation. Add it in the same
+change as the ``moved_to`` disposition. The disposition carries the identity
+forward as a registered leak and grants no approval.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 Identity = tuple[str, str, str, str]
@@ -33,6 +37,62 @@ def load_dispositions() -> list[dict[str, str]]:
 
 
 BASELINE, REGISTER = load_manifest()
+
+#: Reviewed continuations of the same operation, from old route to new route.
+ROUTE_MOVES: dict[str, str] = {}
+
+
+def effective_baseline(
+    baseline: set[Identity], dispositions: list[dict[str, str]] | None
+) -> set[Identity]:
+    """Carry identities through declared moves for the ratchet checks.
+
+    Manifest consistency supplies dispositions so each identity follows its own
+    register history. The legacy check uses ``None`` to follow route declarations
+    alone, since it compares against the historical baseline.
+    """
+    # Reject route cycles in either mode, including cycles unused by the baseline.
+    destinations: dict[str, str] = {}
+    for source in ROUTE_MOVES:
+        route = source
+        visited: set[str] = set()
+        while route in ROUTE_MOVES:
+            if route in visited:
+                raise ValueError(f"cycle in ROUTE_MOVES at {route!r}")
+            visited.add(route)
+            route = ROUTE_MOVES[route]
+        destinations[source] = route
+
+    if dispositions is None:
+        return {
+            (destinations.get(route, route), location, field_path, kind)
+            for route, location, field_path, kind in baseline
+        }
+
+    moves: dict[Identity, str] = {}
+    for entry in dispositions:
+        route = entry["route"]
+        destination = ROUTE_MOVES.get(route)
+        if destination is not None and entry.get("moved_to") == destination:
+            identity = (route, entry["location"], entry["field_path"], entry["kind"])
+            moves[identity] = destination
+
+    effective: set[Identity] = set()
+    for identity in baseline:
+        while identity in moves:
+            identity = (moves[identity], *identity[1:])
+        effective.add(identity)
+    return effective
+
+
+def route_level_baseline(baseline: set[Identity]) -> set[Identity]:
+    """Carry every historical identity to its route's final declared destination.
+
+    The legacy default run can still send fields removed from the content-less
+    register, so its check follows route declarations for those fields too.
+    """
+    return effective_baseline(baseline, dispositions=None)
+
 
 #: The 43 (route, kind) pairs measured before the coverage expansion (default
 #: config, identity fields, offline replay, failure paths). Kept so the report
@@ -232,6 +292,19 @@ def ratchet_problems(
     """Every reason the live leaks are not acceptable against the authority."""
 
     problems: list[str] = []
+    moves: list[tuple[Identity, Identity, dict[str, str]]] = []
+    for entry in dispositions:
+        if "moved_to" not in entry:
+            continue
+        source = (entry["route"], entry["location"], entry["field_path"], entry["kind"])
+        route = entry["moved_to"]
+        if not isinstance(route, str) or route not in ROUTE_INVENTORY_IDS:
+            problems.append(f"unknown moved_to route for {source}: {route!r}")
+        if isinstance(route, str) and anchor is not None and source in anchor:
+            moves.append((source, (route, *source[1:]), entry))
+        elif isinstance(route, str) and ROUTE_MOVES.get(source[0]) != route:
+            problems.append(f"undeclared route move from {source[0]!r} to {route!r}")
+
     if anchor is None:  # first introduction: manifest must equal the live result
         if live != register:
             problems.append(
@@ -239,16 +312,51 @@ def ratchet_problems(
                 f"missing={sorted(register - live)}"
             )
         return problems
-    for added in sorted(live - anchor):
+
+    additions = live - anchor
+    removals = anchor - live
+    carried_from: set[Identity] = set()
+    carried_to: set[Identity] = set()
+    if moves:
+        # Count the original rows before filtering so ambiguous moves cannot match.
+        sources = Counter(source for source, _, _ in moves)
+        targets = Counter(target for _, target, _ in moves)
+        counts_do_not_grow = len(live) <= len(anchor) and Counter(
+            identity[3] for identity in live
+        ) <= Counter(identity[3] for identity in anchor)
+        for source, target, entry in moves:
+            reference = entry.get("reference", "").strip()
+            if (
+                sources[source] == targets[target] == 1
+                and source in removals
+                and target in additions
+                and counts_do_not_grow
+                and source not in register
+                and target in register
+                and ROUTE_MOVES.get(source[0]) == target[0]
+                and target[0] in ROUTE_INVENTORY_IDS
+                and ROUTE_INVENTORY_IDS[target[0]] == ROUTE_INVENTORY_IDS.get(source[0])
+                and entry.get("reason", "").strip()
+                and reference.startswith("INV:")
+                and reference_problem(reference, repo_root, ids, source) is None
+            ):
+                carried_from.add(source)
+                carried_to.add(target)
+            else:
+                problems.append(f"invalid move disposition from {source} to {target}")
+
+    for added in sorted(additions - carried_to):
         problems.append(f"new leak not in {_ANCHOR_REF} manifest: {added}")
     disposed = {
         (d["route"], d["location"], d["field_path"], d["kind"]): d for d in dispositions
     }
-    for gone in sorted(anchor - live):
+    for gone in sorted(removals - carried_from):
         entry = disposed.get(gone)
         if entry is None:
             problems.append(f"leak gone without disposition: {gone}")
             continue
+        if "moved_to" in entry:
+            continue  # An invalid move was already reported above.
         bad = reference_problem(entry.get("reference", ""), repo_root, ids, gone)
         if bad or not entry.get("reason", "").strip():
             problems.append(f"invalid disposition for {gone}: {bad or 'empty reason'}")
