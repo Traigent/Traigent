@@ -65,7 +65,7 @@ different: 8 attempts and about 22 s added (32.5 s vs 10.3 s with
 | Keyless quickstart (`traigent quickstart`) | no external host | no external host |
 | `@traigent.optimize`, mock LLM, dummy key, loopback stub backend | no external host (default pin, `--pins` not needed) [R]; `raw.githubusercontent.com:443` only if `TRAIGENT_LITELLM_LIVE_PRICES=1` | stub only |
 | Same, `injection_mode="seamless"` | same as above | stub only |
-| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` (residual — see above; pins/opt-out cannot help here) | stub only |
+| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` (residual — see above; Traigent's default settings are applied too late to prevent this fetch) | stub only |
 | Llama token count (`calculate_prompt_cost`) | no external host (fixed: no longer downloads a tokenizer to count tokens) [R] | none |
 | Mock run with built-in backend, production policy | `portal.traigent.ai` only (the `raw.githubusercontent.com` contact this row used to show is gone with the default pin) [R] | `portal.traigent.ai` only |
 
