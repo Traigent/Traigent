@@ -46,18 +46,22 @@ def _timeout_used(config: ObservabilityConfig, n: int) -> float:
     return seen[0]
 
 
+@pytest.mark.backend_online
 def test_hundred_trace_batch_gets_scaled_timeout():
     assert _timeout_used(_config(), 100) == pytest.approx(20.0)
 
 
+@pytest.mark.backend_online
 def test_small_batch_keeps_configured_floor():
     assert _timeout_used(_config(), 5) == pytest.approx(10.0)
 
 
+@pytest.mark.backend_online
 def test_explicit_larger_request_timeout_is_kept():
     assert _timeout_used(_config(request_timeout=60.0), 100) == pytest.approx(60.0)
 
 
+@pytest.mark.backend_online
 def test_per_trace_timeout_is_overridable_and_zero_disables_scaling():
     assert _timeout_used(_config(per_trace_timeout=0.5), 100) == pytest.approx(50.0)
     assert _timeout_used(_config(per_trace_timeout=0), 100) == pytest.approx(10.0)
