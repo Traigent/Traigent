@@ -439,21 +439,30 @@ def test_jwt_refresh_on_flagged_manager_that_cannot_latch_drops_old_state_and_em
     # The server already consumed the old refresh token, so a failed latch must not
     # keep it (it would be resent): the manager invalidates its refresh state, and the
     # new JWT is never emitted.
-    from traigent.cloud.auth import AuthStatus
+    from traigent.cloud.auth import AuthStatus, InvalidCredentialsError
 
     auth = _flagged_manager()
     _refresh_ready(auth, monkeypatch)
     monkeypatch.setattr(oo, "latch_on", _boom)
     result = asyncio.run(auth._token_manager.refresh_jwt_secure(OLD_REFRESH))
     assert result.success is False
+    assert result.credentials is None
+    assert not result.headers
+    # The old tokens are NOT kept (they were consumed server-side): gone everywhere.
     assert auth._credentials is None
     assert auth._auth_status == AuthStatus.INVALID
     assert auth._token_manager._refresh_token_secure is None
     assert auth._token_manager.get_authorization_header() == {}
-    with pytest.raises(Exception) as excinfo:
-        asyncio.run(auth.get_auth_headers())
-    assert NEW_JWT not in repr(excinfo.value)
-    assert OLD_JWT not in repr(excinfo.value)
+    # Control: with no API key to re-authenticate from, and under the recording
+    # transport, no credential is emitted and no auth request is sent.
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    with capture_egress() as cap:
+        with pytest.raises(InvalidCredentialsError) as excinfo:
+            asyncio.run(auth.get_auth_headers())
+    assert cap.requests == []
+    text = repr(excinfo.value)
+    for secret in (NEW_JWT, OLD_JWT, OLD_REFRESH, "refresh-new-0123456789"):
+        assert secret not in text
 
 
 def test_jwt_refresh_on_unflagged_manager_ignores_latch_failure(

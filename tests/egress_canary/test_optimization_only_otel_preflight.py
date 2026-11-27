@@ -22,13 +22,18 @@ from .test_optimization_only_egress import _env
 
 pytestmark = pytest.mark.backend_online
 
-# A privacy test must fail loudly, never skip, when its exporter extra is missing.
-import importlib.util  # noqa: E402
 
-assert importlib.util.find_spec("opentelemetry.exporter.otlp.proto.http"), (
-    "opentelemetry-exporter-otlp-proto-http is not installed; "
-    "install the 'tracing' extra (pip install 'traigent[tracing]')"
-)
+@pytest.fixture
+def require_otlp_http_exporter() -> None:
+    """Fail (never skip) when the exporter extra is missing, only for tests that use it."""
+    try:
+        import opentelemetry.exporter.otlp.proto.http  # noqa: F401
+    except ImportError:
+        pytest.fail(
+            "opentelemetry-exporter-otlp-proto-http is not installed; "
+            "install the 'tracing' extra (pip install 'traigent[tracing]')"
+        )
+
 
 OTLP_BASE = f"{BACKEND_URL}/api/v1beta/observability/otlp"
 RESTRICTED = {"valid": True, "optimization_only": True}
@@ -1376,7 +1381,9 @@ def _assert_no_cred_logged(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_gate_exporter_construction_never_logs_the_credential(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    require_otlp_http_exporter: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     import logging
 
@@ -1444,7 +1451,9 @@ _CRLF_HEADERS = f"authorization=Bearer%20{_SYNTH_CRED}%0Amalformed"
 
 
 def test_control_char_header_is_rejected_without_exporter(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    require_otlp_http_exporter: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     import logging
 
