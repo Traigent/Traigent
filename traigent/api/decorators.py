@@ -3550,8 +3550,9 @@ def optimize(  # NOSONAR(S107)
             parallel_config: Consolidated parallel configuration (ParallelConfig
                 or dict). Preferred path for controlling concurrency.
             max_total_examples: Global sample budget across all trials.
-                Setting it explicitly also counts as consent to run trials
-                whose cost cannot be measured (see "Cost safeguards"), but it
+                In a local run, setting it explicitly also counts as consent
+                to run trials whose cost cannot be measured (see "Cost
+                safeguards"), but it
                 does not raise ``max_trials``. When passed to ``.optimize()``
                 it is kept on the function object for later calls.
             samples_include_pruned: Whether pruned trials count toward the sample budget.
@@ -3562,18 +3563,18 @@ def optimize(  # NOSONAR(S107)
                 for managed/cloud runs.
 
         Cost safeguards:
-            cost_limit: Maximum USD spending per optimization run. Defaults to
-                TRAIGENT_RUN_COST_LIMIT env var or $2.00. It cannot bound
-                spend it cannot see: when a trial's cost cannot be measured
-                (no LLM usage captured) and the run was not sized explicitly,
-                the run stops at a default safety limit of 10 trials
-                (TRAIGENT_FALLBACK_TRIAL_LIMIT) with warning
-                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. Passing
-                ``max_trials`` explicitly (here or to ``.optimize()``) runs up
-                to that many trials instead, with warning
-                ``COST_UNMEASURED_TRIALS_RAN``; ``max_total_examples`` also
-                counts as consent but does not raise ``max_trials``.
-                ``max_trials=None`` does not count.
+            cost_limit: Planned maximum USD spend per optimization run (actual
+                spend can exceed it). Defaults to
+                TRAIGENT_RUN_COST_LIMIT env var or $2.00. Passing
+                ``cost_approved=True`` without a Python ``cost_limit`` uses
+                $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
+                TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
+                cannot bound spend it cannot see. If a trial's cost cannot
+                be measured, the run may fail (``OptimizationError`` caused by
+                ``CostTrackingRequiredError``) or stop early; see
+                docs/user-guide/cost_capture.md for when each applies. Explicit ``max_trials`` or ``max_total_examples`` can
+                change that early stop in a local run. ``max_trials=None`` does
+                not count.
                 The limit is enforced between trials, not inside one: a
                 single expensive trial can overshoot it by roughly that
                 trial's cost (plus in-flight parallel trials) before the next
@@ -3588,7 +3589,7 @@ def optimize(  # NOSONAR(S107)
                 instead of a single-call default. Defaults to 1.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
-                cumulative latency, not hard money-spend control.
+                cumulative latency, not spend control (use cost_limit for that).
             metric_name: Metric summed by metric_limit.
             semantic_saturation: Opt-in stop condition config matching
                 TraigentSchema

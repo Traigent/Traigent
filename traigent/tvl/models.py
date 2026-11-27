@@ -656,12 +656,13 @@ def _optional_budget_int(data: dict[str, Any], key: str) -> int | None:
 
 @dataclass(slots=True)
 class ExplorationBudgets:
-    """Hard limits on exploration from TVL 0.9.
+    """Limits on exploration from TVL 0.9.
 
     Attributes:
         max_trials: Maximum number of trials permitted.
-        max_spend_usd: Budget cap on spend in USD.
-        max_wallclock_s: Maximum wall-clock duration in seconds.
+        max_spend_usd: Planned spend limit in USD; actual spend can exceed it.
+        max_wallclock_s: Wall-clock limit in seconds. It sets the run's default
+            timeout; an explicit runtime timeout overrides it.
     """
 
     max_trials: int | None = None

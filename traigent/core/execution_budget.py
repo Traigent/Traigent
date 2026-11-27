@@ -5,40 +5,51 @@
 ``ExecutionBudget`` is an **experimental** primitive (issue #1980): a single cap on
 cost / examples / wall-clock time that can be shared across direct ``evaluate()``
 and ``optimize()`` calls (e.g. baseline -> search -> holdout phases), so the
-*total* spend across the whole workflow is bounded rather than each call being
-independently capped.
+*total* spend across the whole workflow is limited rather than each call being
+independently capped. The limit can be exceeded: a batch, concurrent runs, or one
+evaluation phase can spend past the remaining balance.
 
 Honesty contract (mirrors the SDK's cost-accounting discipline):
 
-- **Examples are a hard limit** — observable on every execution path, so exhaustion
-  is enforced deterministically.
-- **The wall-clock deadline is enforced at trial boundaries.** Between trials it is a
-  hard stop; a single *hung* trial (a deadlocked sampler or stuck provider call) may
-  overrun the deadline by the orchestrator's watchdog grace (25% of the remaining
-  budget, floored at ``1s``, capped at ``5min``) before the watchdog aborts it — so
-  the deadline is hard at trial granularity, not a mid-trial guillotine.
+- **Examples are counted whenever a run reports how many it evaluated**, so
+  exhaustion is enforced within one run; a result with no example count (for
+  example, a rerun that returns nothing) can debit zero. Across overlapping optimization calls the cap is
+  not guaranteed: each run takes its own sample pool from the shared remaining count
+  and debits afterwards.
+- **The wall-clock deadline is checked between trials.** A trial can run past
+  the deadline; the watchdog can cancel async work, but a synchronous worker may
+  keep running.
 - **The monetary cap is enforced at batch/trial boundaries, not per token.** The
   orchestrator checks the shared remaining in its pre-batch admission gate before
   each batch and in the stop condition between trials. In *parallel* mode a batch of
-  up to ``parallel_trials`` trials is admitted together (the gate only admits a batch
-  the remaining can fund in full), so the cap is a tight bound of **± one batch**
-  (± one trial in sequential mode) — not a per-trial-exact hard ceiling. Any overshoot
-  is bounded to one batch's newly-admitted work and only arises when trials cost more
-  than their pre-batch estimate.
-- **The monetary cap is a hard limit only when cost is fully observable.** On raw
+  up to ``parallel_trials`` trials is admitted together, so within one run the cap
+  holds to about **one batch** (one trial in sequential mode) — not a per-trial-exact
+  hard ceiling. After the first measured costs, a batch is admitted only when its
+  estimated cost fits the remaining budget, and overshoot comes from trials costing
+  more than estimated. When the run has recorded no trials and the shared budget has
+  recorded no spend, the first batch skips that affordability check and can exceed the
+  remaining budget even when it costs less than the default estimate; once the shared
+  budget has recorded spend (for example, from an earlier run), a new run's first
+  batch is checked against a default estimate and can be refused. Overlapping optimization calls each read the shared
+  remaining balance and debit after each trial, so together they can overshoot by
+  more than one batch.
+- **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
-  cost, so a trial may debit ``$0`` it did not actually cost. When that happens the
-  budget reports ``cost_tracking != "complete"`` and treats the consumed cost as a
-  **lower bound** — it never claims a hard monetary guarantee it cannot honor.
-- **``enforce_untracked_cost=True`` fails closed mid-run only for trials that report
-  NO cost** (``cost is None`` — e.g. a raw-provider trial with no usage data): the
-  next admission after such a trial stops with ``stop_reason == "execution_budget"``.
-  A model that is merely *unpriced* but reports a concrete ``$0`` is NOT caught
-  mid-run (that debit is indistinguishable from a genuinely free ``$0`` trial); the
-  silent-``$0`` path is reconciled at **finalization** — folded into
-  ``cost_tracking`` via the ``CostEnforcer`` ``unknown_cost_mode`` state and the
-  ``UNPRICED_MODEL_RUNTIME`` warning (see ``mark_cost_untracked``) and surfaced as a
-  lower-bound cost, not stopped while running.
+  cost, so a trial may debit ``$0`` it did not actually cost. When that cost is missing
+  or flagged unmeasured, the budget reports ``cost_tracking != "complete"`` and
+  treats the consumed cost as a **lower bound**. An unflagged numeric ``$0`` is
+  accepted as complete (see the caveat below).
+- **``enforce_untracked_cost=True`` blocks the next batch once tracking is recorded
+  incomplete**, including trials that debit known spend but mark tracking incomplete.
+  The most common trigger is a trial that reports NO cost (``cost is None`` — e.g. a
+  raw-provider trial with no usage data): the next admission after such a trial stops
+  with ``stop_reason == "execution_budget"``.
+  The normal evaluator flags unpriced usage as unmeasured, and the orchestrator
+  checks that mid-run. The remaining gap is an unflagged ``$0``, which is
+  indistinguishable from a genuinely free trial; it is surfaced only if something
+  else marks tracking incomplete at **finalization** (the ``CostEnforcer``
+  ``unknown_cost_mode`` state or the ``UNPRICED_MODEL_RUNTIME`` warning, see
+  ``mark_cost_untracked``), as a lower-bound cost, not stopped while running.
 
 The budget is thread-safe (``threading.RLock``); ``debit_trial`` is a plain sync
 method called from inside the orchestrator's async state-lock and **never raises into
@@ -712,15 +723,15 @@ class ExecutionBudget:
         """Tri-state honesty flag for the monetary cap.
 
         ``"complete"`` when every trial's cost was observed; ``"partial"`` when some
-        were unobservable; ``"untracked"`` when none were. The cap is a hard
-        guarantee only when this is ``"complete"``.
+        were unobservable; ``"untracked"`` when none were. The recorded spend is
+        complete only when this is ``"complete"``; otherwise it is a lower bound.
         """
         with self._lock:
             return self._cost_tracking_locked()
 
     @property
     def was_any_cost_untracked(self) -> bool:
-        """True when the monetary cap is a lower bound, not a hard guarantee."""
+        """True when the recorded spend is a lower bound (tracking is incomplete)."""
         with self._lock:
             return self._cost_tracking_locked() != "complete"
 
@@ -766,7 +777,7 @@ class ExecutionBudget:
         caveat = (
             ""
             if tracking == "complete"
-            else " cost=LOWER_BOUND(not a hard guarantee: some cost was unobservable)"
+            else " cost=LOWER_BOUND(some cost was unobservable)"
         )
         return (
             "ExecutionBudget("

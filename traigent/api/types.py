@@ -1064,19 +1064,22 @@ class OptimizationResult:
             - "max_trials_reached": Hit the configured max_trials limit
             - "max_samples_reached": Hit the max samples/examples limit
             - "timeout": Exceeded the timeout duration
-            - "cost_limit": Hit the cost budget limit mid-run; pre-run cost
-              approval declines raise CostLimitExceeded instead.
-            - "execution_budget": Exhausted a shared cumulative ExecutionBudget
-              (cost, examples, or wall-clock deadline) spanning direct evaluate()
-              and optimize() calls (issue #1980, experimental). Reported in preference to
-              "cost_limit". The shared cumulative cost is enforced mid-run by the
-              budget's stop condition and its pre-batch admission gate; the per-run
-              cost enforcer's own cost_limit is left intact, so the pre-run approval
-              gate estimates against the user's configured limit rather than the
-              budget's remaining cost. Examples are a hard limit; the deadline is
-              hard at trial boundaries (a single hung trial may overrun by the
-              watchdog grace); the monetary cap is a lower bound when cost is
-              unobservable — see metadata["execution_budget"]["cost_tracking"].
+            - "cost_limit": The run's cost limit stopped it: spend reached the
+              limit, a trial could not be admitted under it, or the unknown-cost
+              fallback applied. Pre-run cost approval declines raise
+              CostLimitExceeded instead.
+            - "execution_budget": A shared ExecutionBudget (issue #1980,
+              experimental) stopped it: a dimension ran out, an estimate could
+              not be admitted against it, or cost tracking was incomplete under
+              ``enforce_untracked_cost``. Usually reported in
+              preference to "cost_limit". Caps are not guaranteed: overlapping optimization
+              calls each take their own sample pool and debit afterwards, and
+              the deadline is checked between trials; a trial can run past it, and
+              the watchdog can cancel async work, but a synchronous worker may
+              keep running. Recorded
+              spend can be a lower bound when cost is unobservable; see
+              metadata["execution_budget"]["cost_tracking"] and
+              docs/guides/execution-budget.md.
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)

@@ -1,10 +1,10 @@
 """``respond``: a human-approved fix for an open breach.
 
 The response is a request to run the function's existing ``.optimize()`` under
-a declared cost ceiling.  Nothing is deployed.  If the optimize run raises, the occurrence is marked failed
+a declared cost limit.  Nothing is deployed.  If the optimize run raises, the occurrence is marked failed
 (spend is never undone) and a retry needs a new approval.  Every start is preceded by a
 fresh, locally recorded human approval bound to the full-policy digest, rule,
-breach, occurrence, attempt, cost ceiling and an expiry, and by a second round of
+breach, occurrence, attempt, cost limit and an expiry, and by a second round of
 checks immediately before the run.  Any failed check holds: nothing runs.
 
 Two paths.  With ``agent_ref`` the HOSTED path runs (``respond_hosted``):

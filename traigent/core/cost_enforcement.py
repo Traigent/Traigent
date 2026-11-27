@@ -15,12 +15,14 @@ Adaptive Cost Estimation:
       override permit admission or enforce the run budget
 
 Environment Variables:
-    TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
+    TRAIGENT_RUN_COST_LIMIT: Planned max USD spend per run (default: 2.0);
+        actual spend can exceed it
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
-    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
-        (default: false)
+    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs.
+        When unset, a ``cost`` objective enables it for that optimization;
+        otherwise it is off. Set it to ``false`` to opt out.
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning).
         This is a per-trial actual-vs-mean estimate check, not a budget guardrail.
@@ -229,7 +231,7 @@ class CostEnforcerConfig:
     """Configuration for cost enforcement.
 
     Attributes:
-        limit: Maximum USD spending per optimization run. Must be > 0;
+        limit: Planned maximum USD spend per run; actual spend can exceed it. Must be > 0;
             nonpositive limits raise ``ConfigurationError`` at construction
             time instead of silently blocking every trial.
         approved: Whether to skip the approval prompt.
@@ -469,18 +471,21 @@ def unmeasured_cost_stop_message(
         f"so the run stopped at the default safety limit of "
         f"{fallback_trial_limit} trials: the cost limit ({format_usd(cost_limit)}) "
         "cannot bound spend it cannot see. Set max_trials explicitly on "
-        "@traigent.optimize or .optimize() to run more trials; the run then "
+        "@traigent.optimize or .optimize() to run more trials in a local run "
+        "(a managed run keeps this limit); the run then "
         "goes up to that many and still reports the unmeasured cost. "
-        "(max_total_examples caps the total examples and also counts as your "
-        "explicit consent, but does not raise max_trials, which defaults to "
-        "10.) To get cost measured instead, "
-        f"{capture} -- synchronous LangChain ChatOpenAI/ChatAnthropic "
-        ".invoke (async .ainvoke/.abatch are not captured yet), "
+        "(In a local run, max_total_examples caps the total examples and also "
+        "counts as your explicit consent, but does not raise max_trials, which "
+        "defaults to 10.) To get cost measured instead, "
+        f"{capture} -- LangChain ChatOpenAI/ChatAnthropic "
+        ".invoke/.ainvoke (.abatch is captured through .ainvoke), "
         "non-streaming litellm.completion/acompletion, or a raw "
         "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
-        "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
-        "docs/user-guide/cost_capture.md); a fully measured run is bounded by "
-        "cost_limit= / TRAIGENT_RUN_COST_LIMIT. TRAIGENT_FALLBACK_TRIAL_LIMIT "
+        "or auto_override_frameworks=True together with "
+        "framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
+        "docs/user-guide/cost_capture.md); a fully measured run stops once its "
+        "measured spend reaches cost_limit= / TRAIGENT_RUN_COST_LIMIT (an admitted "
+        "trial can still overshoot). TRAIGENT_FALLBACK_TRIAL_LIMIT "
         "changes the default safety limit."
     )
 
@@ -843,8 +848,8 @@ class CostEnforcer:
     def waive_unknown_cost_trial_cap(self) -> None:
         """Let an explicitly sized run continue while its cost is unmeasured.
 
-        The measured part of the spend is still bounded by the cost limit;
-        unmeasured trials are bounded only by the run size the user set.
+        The run still stops once measured spend reaches the cost limit (an
+        admitted trial can overshoot it); unmeasured trials are bounded only by the run size the user set.
         """
         with self._lock:
             self._unknown_cost_cap_waived = True

@@ -754,7 +754,7 @@ def configure_for_budget(
 
     This helper pre-filters candidate models to those that can run at least
     ``min_instances`` evaluations within budget, then derives trial/parallel
-    limits to keep optimization spend bounded.
+    limits sized to the budget.
 
     Args:
         budget_usd: Total spend budget in USD.

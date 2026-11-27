@@ -92,7 +92,7 @@ def test_happy_path_runs_existing_optimize_with_the_cost_limit(
     _applied(path)
     result = _cli(path, "respond", input="y\n")
     assert result.exit_code == 0, result.output
-    assert "run id: run-42" in result.output and "cost ceiling: 5.0" in result.output
+    assert "run id: run-42" in result.output and "cost limit: 5.0" in result.output
     optimize_mock.assert_awaited_once_with(cost_limit=5.0)
     state = manifest.default_state_dir()
     approvals = json.loads(
