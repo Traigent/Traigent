@@ -16,9 +16,9 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   example, a rerun that returns nothing) can debit zero. Across overlapping optimization calls the cap is
   not guaranteed: each run takes its own sample pool from the shared remaining count
   and debits afterwards.
-- **The wall-clock deadline is checked between trials.** A trial already running is
-  not interrupted and can run past it, and for a synchronous trial the worker can
-  keep running after the run stops waiting.
+- **The wall-clock deadline is checked between trials.** A trial can run past
+  the deadline; the watchdog can cancel async work, but a synchronous worker may
+  keep running.
 - **The monetary cap is enforced at batch/trial boundaries, not per token.** The
   orchestrator checks the shared remaining in its pre-batch admission gate before
   each batch and in the stop condition between trials. In *parallel* mode a batch of
@@ -35,9 +35,10 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   more than one batch.
 - **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
-  cost, so a trial may debit ``$0`` it did not actually cost. When that happens the
-  budget reports ``cost_tracking != "complete"`` and treats the consumed cost as a
-  **lower bound**, and the recorded spend is incomplete.
+  cost, so a trial may debit ``$0`` it did not actually cost. When that cost is missing
+  or flagged unmeasured, the budget reports ``cost_tracking != "complete"`` and
+  treats the consumed cost as a **lower bound**. An unflagged numeric ``$0`` is
+  accepted as complete (see the caveat below).
 - **``enforce_untracked_cost=True`` blocks the next batch once tracking is recorded
   incomplete**, including trials that debit known spend but mark tracking incomplete.
   The most common trigger is a trial that reports NO cost (``cost is None`` — e.g. a

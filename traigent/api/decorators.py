@@ -3571,12 +3571,13 @@ def optimize(  # NOSONAR(S107)
                 TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
                 cannot bound spend it cannot see. A trial whose cost cannot
                 be fully measured is treated as unmeasured. With an explicit
-                cost limit, that raises ``CostTrackingRequiredError``. With the
-                inherited default limit, the run may stop early after a number
-                of such trials (``stop_reason == "cost_limit"``, warning
+                cost limit, a completed (non-failed) such trial raises
+                ``CostTrackingRequiredError``. With the inherited default
+                limit, an unmeasured trial switches the run to a trial-count
+                limit (``stop_reason == "cost_limit"``, warning
                 ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``). For a local
                 optimization, passing ``max_trials`` explicitly (here or to
-                ``.optimize()``) waives that early stop, with warning
+                ``.optimize()``) waives that trial-count limit, with warning
                 ``COST_UNMEASURED_TRIALS_RAN``; in a local run
                 ``max_total_examples`` also counts as consent but does not
                 raise ``max_trials``. Managed optimization can still apply the

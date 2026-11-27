@@ -1071,12 +1071,12 @@ class OptimizationResult:
             - "execution_budget": A shared ExecutionBudget (issue #1980,
               experimental) stopped it: a dimension ran out, an estimate could
               not be admitted against it, or cost tracking was incomplete under
-              ``enforce_untracked_cost``. Reported in preference to
-              "cost_limit". Caps are not guaranteed: overlapping optimization
+              ``enforce_untracked_cost``. Usually reported in
+              preference to "cost_limit". Caps are not guaranteed: overlapping optimization
               calls each take their own sample pool and debit afterwards, and
-              the deadline is checked between trials; a trial already running is
-              not interrupted and can run past it, and for a synchronous trial
-              the worker can keep running after the run stops waiting. Recorded
+              the deadline is checked between trials; a trial can run past it, and
+              the watchdog can cancel async work, but a synchronous worker may
+              keep running. Recorded
               spend can be a lower bound when cost is unobservable; see
               metadata["execution_budget"]["cost_tracking"] and
               docs/guides/execution-budget.md.
