@@ -55,6 +55,7 @@ import atexit
 import ipaddress
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -65,6 +66,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 _THIS_FILE = os.path.abspath(__file__)
 _SCRIPTS_DIR = os.path.dirname(_THIS_FILE)
@@ -524,6 +526,30 @@ def _litellm_load_record() -> dict[str, Any] | None:
         return {"error": f"{type(exc).__name__}"}
 
 
+def _litellm_default_pricing_url() -> str | None:
+    """litellm's built-in pricing URL, read from its source without importing it.
+
+    Importing litellm would itself trigger the fetch this audit is watching,
+    so the default (the ``os.getenv("LITELLM_MODEL_COST_MAP_URL", <default>)``
+    argument in litellm/__init__.py) is read as text.
+    """
+    import importlib.util
+    import re
+
+    try:
+        spec = importlib.util.find_spec("litellm")
+        if spec is None or not spec.origin:
+            return None
+        with open(spec.origin, encoding="utf-8") as fh:
+            text = fh.read()
+    except Exception:  # noqa: BLE001 - witness is best-effort
+        return None
+    match = re.search(
+        r"LITELLM_MODEL_COST_MAP_URL[\"']\s*,\s*[\"'](https?://[^\"']+)[\"']", text
+    )
+    return match.group(1) if match else None
+
+
 def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
     import importlib.util
 
@@ -537,20 +563,22 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
         block_egress=block_egress, sdk_root=sdk_root, workload_file=workload_file
     )
     sys.addaudithook(recorder.hook)
+    default_pricing_url = _litellm_default_pricing_url()
 
     status: dict[str, Any] = {"exit": "ok", "error": None}
 
     def dump() -> None:
         recorder.enabled = False  # the report file itself is not SDK behaviour
+        # Decided first, before the report step imports anything: only a
+        # litellm the workload itself imported may supply a load record, so
+        # the audit cannot create its own witness.
+        workload_imported_litellm = "litellm" in sys.modules
         payload = recorder.snapshot()
         payload.update(status)
         payload["traigent_file"] = spec.origin
-        try:
-            import litellm  # noqa: F401 - version only, already imported by now
-
-            payload["litellm_version"] = _dist_version("litellm")
-        except Exception:  # noqa: BLE001
-            payload["litellm_version"] = None
+        payload["litellm_version"] = _dist_version("litellm")
+        payload["workload_imported_litellm"] = workload_imported_litellm
+        payload["litellm_default_pricing_url"] = default_pricing_url
         # Direct evidence of whether the SDK's litellm-download pin landed in
         # this child's environment -- lets a test assert on the *cause*
         # (pin unset) rather than only the *effect* (a host got recorded),
@@ -559,7 +587,9 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
         payload["env_litellm_local_model_cost_map"] = os.environ.get(
             "LITELLM_LOCAL_MODEL_COST_MAP"
         )
-        payload["litellm_load_record"] = _litellm_load_record()
+        payload["litellm_load_record"] = (
+            _litellm_load_record() if workload_imported_litellm else None
+        )
         tmp = out_path + ".partial"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, default=str)
@@ -631,9 +661,9 @@ def stub_backend() -> Iterator[tuple[str, list[str]]]:
         server.server_close()
 
 
-#: The host litellm's native client fetches its price table from. The
-#: loopback listener below only stands in for it, so reports name this host.
-PRICING_HOST = "raw.githubusercontent.com"
+#: Pseudo-host recorded when litellm's fetch ignored the listener override.
+#: The attributed pricing host is read from litellm itself, not hard-coded.
+NOT_REDIRECTED = "(native fetch not redirected)"
 _PRICING_ENV = "LITELLM_MODEL_COST_MAP_URL"
 
 
@@ -641,9 +671,12 @@ class _PricingListenerHandler(BaseHTTPRequestHandler):
     """Answers 404 to every request and records the path only."""
 
     paths: list[str] = []
+    expected_path: str = ""
 
     def _answer(self) -> None:
-        self.paths.append(self.path.split("?", 1)[0])
+        # Only a GET on the exact per-run path counts as litellm's fetch.
+        if self.command == "GET" and self.path.split("?", 1)[0] == self.expected_path:
+            self.paths.append(self.expected_path)
         self.send_response(404)
         self.send_header("Content-Length", "0")
         self.send_header("Connection", "close")
@@ -665,29 +698,55 @@ def pricing_listener() -> Iterator[tuple[str, list[str]]]:
     the machine.
     """
     log: list[str] = []
-    handler = type("Handler", (_PricingListenerHandler,), {"paths": log})
+    path = f"/{secrets.token_hex(8)}/model_prices.json"
+    handler = type(
+        "Handler", (_PricingListenerHandler,), {"paths": log, "expected_path": path}
+    )
     handler.timeout = 5  # type: ignore[attr-defined]
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}/model_prices.json", log
+        yield f"http://127.0.0.1:{server.server_address[1]}{path}", log
     finally:
         server.shutdown()
         server.server_close()
 
 
-def native_fetch_observed(report: dict[str, Any]) -> list[str]:
-    """Witnesses that litellm attempted its pricing fetch in the child."""
+def native_fetch_observed(report: dict[str, Any]) -> dict[str, Any]:
+    """What the two witnesses say about litellm's native pricing fetch.
+
+    Returns witnesses (``listener``, ``litellm-load-record``), the attributed
+    destination host, and ``not_redirected`` when a pricing fetch was
+    attempted somewhere other than the listener although the override was
+    set (the override was ignored or replaced).
+    """
+    listener_url = report.get("pricing_listener_url")
+    rec = report.get("litellm_load_record") or {}
+    rec_url = rec.get("url")
+    attempted = bool(rec_url) and not rec.get("is_env_forced")
     witnesses: list[str] = []
     if report.get("pricing_listener_requests"):
         witnesses.append("listener")
-    rec = report.get("litellm_load_record") or {}
-    url = report.get("pricing_listener_url")
-    if url and rec.get("url") == url and not rec.get("is_env_forced"):
+    default_host = urlsplit(report.get("litellm_default_pricing_url") or "").hostname
+    hosts: list[str] = []
+    not_redirected = False
+    if attempted and rec_url == listener_url:
         witnesses.append("litellm-load-record")
-    return witnesses
+    elif attempted:
+        witnesses.append("litellm-load-record")
+        real = urlsplit(str(rec_url)).hostname
+        if real:
+            hosts.append(real)
+        not_redirected = bool(listener_url)
+    if witnesses and not not_redirected:
+        hosts.append(default_host or "litellm-default-pricing-host-unknown")
+    return {
+        "witnesses": witnesses,
+        "hosts": sorted(set(hosts)),
+        "not_redirected": not_redirected,
+    }
 
 
 def child_env(
@@ -737,15 +796,24 @@ def child_env(
                 "TRAIGENT_ENVIRONMENT": "development",
             }
         )
-    if pricing_url is not None:
-        env[_PRICING_ENV] = pricing_url
-        # litellm's fetch honours proxies; keep the loopback listener direct.
-        for name in ("NO_PROXY", "no_proxy"):
-            env[name] = ",".join(filter(None, [env.get(name), "127.0.0.1"]))
     if pins:
         env.update(NETWORK_PINS)
     if extra:
         env.update(extra)
+    if pricing_url is not None:
+        # Applied last so extra env cannot overwrite it.
+        env[_PRICING_ENV] = pricing_url
+        # litellm's fetch honours proxies; keep the loopback listener direct.
+        # Append to any existing value; keep both spellings identical.
+        entries: list[str] = []
+        for name in ("NO_PROXY", "no_proxy"):
+            for item in env.get(name, "").split(","):
+                item = item.strip()
+                if item and item not in entries:
+                    entries.append(item)
+        if "127.0.0.1" not in entries:
+            entries.append("127.0.0.1")
+        env["NO_PROXY"] = env["no_proxy"] = ",".join(entries)
     return env
 
 
@@ -779,7 +847,7 @@ def run_workload(
                 backend_url=url if backend == "stub" else None,
                 pins=pins,
                 extra=extra_env,
-                pricing_url=pricing_url,
+                pricing_url=pricing_url if block_egress else None,
             )
             env["HOME"] = home  # keep the real home out of reach and visible
             cmd = [python or sys.executable, _THIS_FILE, "_child", workload, out]
@@ -833,12 +901,14 @@ def summarize(report: dict[str, Any]) -> dict[str, list[str]]:
         {d.rsplit(":", 1)[0] for d in by_cat.get("dns", [])}
         | {d.rsplit(":", 1)[0] for d in by_cat.get("connect", [])}
     )
-    witnesses = native_fetch_observed(report)
-    if witnesses and PRICING_HOST not in hosts:
-        # The listener only stands in for the real pricing host.
-        hosts = sorted([*hosts, PRICING_HOST])
+    native = native_fetch_observed(report)
+    extra_hosts = list(native["hosts"])
+    if native["not_redirected"]:
+        extra_hosts.append(NOT_REDIRECTED)  # treated as a failure by every test
+    hosts = sorted({*hosts, *extra_hosts})
     return {
-        "native_fetch_witnesses": witnesses,
+        "native_fetch_witnesses": native["witnesses"],
+        "native_fetch_not_redirected": native["not_redirected"],
         "hosts": hosts,
         "external_hosts": [h for h in hosts if not Recorder._is_loopback(h)],
         "processes": by_cat.get("process", []),

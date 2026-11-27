@@ -27,6 +27,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from tests.egress_canary import http_egress_scan
+from tests.egress_canary.harness import require_litellm_local_cost_map
 from traigent.cloud import (
     auth,
     backend_client,
@@ -64,6 +65,8 @@ HEADERS = {"X-API-Key": "test-key"}  # pragma: allowlist secret
 
 @pytest.fixture(autouse=True)
 def no_unexpected_egress(monkeypatch):
+    # Enforce the precondition named above, before any patch is installed.
+    require_litellm_local_cost_map()
     escaped = []
 
     def unexpected(*args, **kwargs):

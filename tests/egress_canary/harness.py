@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import socket
 import threading
@@ -607,6 +608,8 @@ class EgressCapture:
     def install(self) -> EgressCapture:
         from contextlib import ExitStack
 
+        require_litellm_local_cost_map()
+
         stack = ExitStack()
         self._stack = stack
         self._patch_aiohttp(stack)
@@ -839,6 +842,21 @@ class EgressCapture:
         stack.enter_context(mock.patch.object(socket.socket, "connect", connect))
         stack.enter_context(mock.patch.object(socket.socket, "connect_ex", connect_ex))
         stack.enter_context(mock.patch.object(socket, "getaddrinfo", getaddrinfo))
+
+
+def require_litellm_local_cost_map() -> None:
+    """Fail loudly if litellm could fetch its price table under a capture.
+
+    The capture cannot see litellm's native fetch, so it is only sound while
+    the local-cost-map pin is on (litellm reads the value case-insensitively
+    and only "true" counts).
+    """
+    value = os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP", "")
+    if value.lower() != "true":
+        raise AssertionError(
+            "egress capture does not watch litellm's native price fetch; "
+            f"LITELLM_LOCAL_MODEL_COST_MAP must be 'true' (got {value!r})"
+        )
 
 
 @contextmanager
