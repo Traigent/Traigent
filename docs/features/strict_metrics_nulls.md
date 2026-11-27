@@ -2,19 +2,24 @@
 
 ## Overview
 
-The `TRAIGENT_STRICT_METRICS_NULLS` feature flag controls how Traigent handles missing or invalid metrics. When enabled, it returns `null` (None in Python) for missing values instead of defaulting to `0.0`, preventing misleading calculations and preserving data integrity.
+Set `TRAIGENT_STRICT_METRICS_NULLS` to let some metric paths report a missing
+value as `None` in Python (`null` in JSON). For example, some numeric conversions
+return `None` when their input is missing or cannot be converted. Score
+aggregation can still substitute `0.0` for a missing score.
 
-## Motivation
+When usage capture is enabled and available for a custom evaluator, the SDK
+aggregates each of the following metrics across examples:
 
-Previously, Traigent defaulted all missing metrics to `0.0`, which could lead to:
-- **Misleading averages**: Missing data counted as zero skewed calculations
-- **False precision**: Showing `0.0` implied measurement when none existed
-- **Incorrect aggregations**: Sum/average operations included non-existent data
-- **Hidden failures**: Real issues masked by artificial zeros
+| Metrics | With strict nulls enabled |
+| --- | --- |
+| `input_tokens`, `output_tokens`, `total_tokens` | Each total is `None` if no example reports that count. |
+| `input_cost`, `output_cost`, `total_cost` | Each total is `None` when the trial's cost is unknown, for example when a successful example reports zero provider attempts and no cost. Explicit zero-cost evidence can produce a zero total. When the trial is flagged `cost_unmeasured`, all three are cleared even if some examples reported spend. When some examples report zero provider attempts and the rest report a `cost`, `total_cost` is the sum of those per-example costs, even if no example reported a `total_cost` key (one example with `cost` 0.25 and one failed example with zero attempts give 0.25). |
+| Requested cost objectives (`cost`, `input_cost`, `output_cost`, `total_cost`) | Set to `None` when the trial is flagged `cost_unmeasured`. |
+
+With strict nulls off, the custom-evaluator aggregation omits these unknown
+values.
 
 ## Usage
-
-### Enabling the Feature
 
 Set the environment variable before running Traigent:
 
@@ -22,203 +27,43 @@ Set the environment variable before running Traigent:
 export TRAIGENT_STRICT_METRICS_NULLS=true
 ```
 
-Accepted truthy values: `true`, `1`, `yes`, `True`, `TRUE`, `YES`
+Strict nulls are off by default. The environment variable accepts `true`,
+`1`, `yes`, and `on`, without regard to case. Set the variable to enable
+strict nulls for local evaluation metrics and custom-evaluator aggregation.
 
-### Disabling the Feature (Default)
-
-The feature is disabled by default for backward compatibility:
-
-```bash
-export TRAIGENT_STRICT_METRICS_NULLS=false
-# Or simply don't set the variable
-```
-
-## Behavior Comparison
-
-### JSON Output with Flag Disabled (Default)
-```json
-{
-  "metrics": {
-    "accuracy": 0.0,
-    "score": 0.0,
-    "duration": 0.0,
-    "input_tokens": 0.0,
-    "output_tokens": 0.0,
-    "total_tokens": 0.0,
-    "response_time_ms": 0.0,
-    "cost": 0.0
-  }
-}
-```
-
-### JSON Output with Flag Enabled
-```json
-{
-  "metrics": {
-    "accuracy": 0.0,
-    "score": 0.0,
-    "duration": null,
-    "input_tokens": null,
-    "output_tokens": null,
-    "total_tokens": null,
-    "response_time_ms": null,
-    "cost": null
-  }
-}
-```
-
-Note: `accuracy` and `score` remain `0.0` as they represent actual measured values, not missing data.
-
-## Affected Components
-
-### Core Functions
-- **`safe_float_convert()`** in `traigent/core/utils.py`
-  - Returns `None` instead of `0.0` for invalid/missing values when flag enabled
-
-### Metrics Tracking
-- **`MetricsTracker`** in `traigent/evaluators/metrics_tracker.py`
-  - `_empty_backend_format()`: Returns `None` for missing metrics
-  - `_empty_aggregated_metrics()`: Returns `None` for aggregated statistics
-  - `safe_get()` helper: Returns `None` instead of default value
-
-### Evaluators
-- **`BaseEvaluator`** in `traigent/evaluators/base.py`
-  - LLM metrics handling respects the flag for missing values
-
-### Orchestrator
-- **`TraigentOrchestrator`** in `traigent/core/orchestrator.py`
-  - Aggregation functions filter `None` values before calculations
-  - Comparison operations check for `None` before numeric comparisons
-
-## Migration Guide
-
-### For New Projects
-Enable the flag from the start to ensure data integrity:
-```bash
-export TRAIGENT_STRICT_METRICS_NULLS=true
-```
-
-### For Existing Projects
-
-1. **Test with the flag enabled** in a development environment:
-   ```bash
-   TRAIGENT_STRICT_METRICS_NULLS=true python your_script.py
-   ```
-
-2. **Update code that expects numeric values**:
-   ```python
-   # Before (assumes numeric)
-   if metrics["cost"] > 0:
-       process_cost(metrics["cost"])
-
-   # After (handles None)
-   if metrics["cost"] is not None and metrics["cost"] > 0:
-       process_cost(metrics["cost"])
-   ```
-
-3. **Update aggregation logic**:
-   ```python
-   # Before (includes zeros)
-   avg = sum(values) / len(values)
-
-   # After (excludes None)
-   non_none = [v for v in values if v is not None]
-   avg = sum(non_none) / len(non_none) if non_none else None
-   ```
-
-4. **Gradually roll out** the change:
-   - Enable in development/staging first
-   - Monitor for any issues
-   - Deploy to production when confident
-
-## Testing
-
-Run the comprehensive test suite:
-```bash
-TRAIGENT_MOCK_LLM=true pytest tests/unit/config/test_strict_metrics_nulls.py -v
-```
-
-The test suite covers:
-- Configuration parsing from environment
-- `safe_float_convert()` behavior
-- MetricsTracker empty format generation
-- JSON serialization with null values
-- Backward compatibility
-- Runtime flag toggling
+Passing a `TraigentConfig` with `strict_metrics_nulls=True` to
+`traigent.initialize()` also enables strict nulls for custom-evaluator
+aggregation and other metric readers that honor the configuration. Those
+readers stay enabled when the variable is `false` or unset. The local
+evaluation metric formatter and its empty metric defaults read the
+environment variable directly.
 
 ## Best Practices
 
-1. **Always check for None** before numeric operations:
-   ```python
-   if value is not None and value > threshold:
-       # Process value
-   ```
+Use `.get()` to read a metric that can be absent. Check for `None` before
+doing arithmetic on an optional metric.
 
-2. **Use default values explicitly** when needed:
-   ```python
-   cost = metrics.get("cost") or 0.0  # Explicit default
-   ```
-
-3. **Filter None values** in aggregations:
-   ```python
-   valid_values = [v for v in values if v is not None]
-   if valid_values:
-       average = sum(valid_values) / len(valid_values)
-   ```
-
-4. **Document expected behavior** in your code:
-   ```python
-   def process_metrics(metrics: dict) -> float:
-       """
-       Process metrics dictionary.
-
-       Note: With TRAIGENT_STRICT_METRICS_NULLS=true,
-       missing metrics will be None instead of 0.0
-       """
-   ```
-
-## Backward Compatibility
-
-The feature is **disabled by default** to maintain backward compatibility. Existing code will continue to work unchanged, receiving `0.0` for missing values as before.
-
-To ensure your code works with both modes:
 ```python
-def handle_metric(value):
-    # Works with both 0.0 and None
-    if not value:  # Covers both 0.0 and None
-        return "No data"
-    return f"Value: {value}"
+values = [None, 0.0, 1.0]
+present = [value for value in values if value is not None]
+average = sum(present) / len(present) if present else None
+print(average)
 ```
 
-## Performance Impact
+For trial cost, check `cost_unmeasured` as well as `cost`. A pruned trial
+can carry both the flag and a numeric cost. This example displays a cost
+total when available.
 
-Minimal performance impact:
-- Additional environment variable check per conversion
-- None filtering in aggregations has negligible overhead
-- No impact when flag is disabled
-
-## Troubleshooting
-
-### TypeError with None comparisons
-**Error**: `TypeError: '>' not supported between instances of 'NoneType' and 'int'`
-**Solution**: Add None checks before comparisons:
 ```python
-if value is not None and value > 0:
+def cost_label(metrics):
+    cost = metrics.get("cost")
+    if metrics.get("cost_unmeasured") or cost is None:
+        return "unmeasured"
+    return f"${cost:.4f}"
+
+for metrics in ({"cost": 1.0}, {"cost": 0.0}, {}, {"cost": 1.0, "cost_unmeasured": 1.0}):
+    print(cost_label(metrics))
 ```
 
-### JSON serialization issues
-**Error**: Some JSON libraries may not handle None
-**Solution**: Python's `json` module handles None → null correctly by default
-
-### Unexpected None values
-**Check**: Ensure the flag is set correctly:
-```python
-import os
-print(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
-```
-
-## Related Configuration
-
-Other Traigent configuration options that work well with strict nulls:
-- `TRAIGENT_MOCK_LLM`: Testing without real API calls
-- `TRAIGENT_DEBUG`: Enhanced logging for troubleshooting
+See [Token and Cost Capture](../user-guide/cost_capture.md) for details on
+unmeasured cost.
