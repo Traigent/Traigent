@@ -8,7 +8,10 @@ and an exporter that re-checks every batch.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
+
+from traigent.utils.send_policy import may_send_telemetry
 
 try:  # pragma: no cover - optional dependency
     import requests
@@ -20,6 +23,21 @@ def _tracing() -> Any:
     import traigent.core.tracing as _t
 
     return _t
+
+
+_request_suppressed: ContextVar[bool] = ContextVar(
+    "trace_request_suppressed", default=False
+)
+
+
+class _TraceExportSuppressed(ConnectionAbortedError):
+    """A policy change disabled a prepared trace request."""
+
+
+def _check_export_policy() -> None:
+    if not may_send_telemetry():
+        _request_suppressed.set(True)
+        raise _TraceExportSuppressed
 
 
 class _GatedSession(requests.Session if requests is not None else object):  # type: ignore[misc]
@@ -37,9 +55,18 @@ class _GatedSession(requests.Session if requests is not None else object):  # ty
         self._gate_api_key = api_key
 
     def send(self, request: Any, **kwargs: Any) -> Any:
-        if _tracing()._optimization_only_blocks_export(
+        _check_export_policy()
+        blocked = _tracing()._optimization_only_blocks_export(
             self._gate_endpoint, self._gate_api_key
-        ) or not self._prepared_request_allowed(request):
+        )
+        _check_export_policy()
+        if blocked:
+            raise ConnectionAbortedError(
+                "optimization_only: trace export blocked at send time"
+            )
+        allowed = self._prepared_request_allowed(request)
+        _check_export_policy()
+        if not allowed:
             raise ConnectionAbortedError(
                 "optimization_only: trace export blocked at send time"
             )
@@ -104,11 +131,18 @@ class _GatedSpanExporter:
     def export(self, spans: Any) -> Any:
         from opentelemetry.sdk.trace.export import SpanExportResult
 
-        if _tracing()._optimization_only_blocks_export(self._endpoint, self._api_key):
+        if not may_send_telemetry() or _tracing()._optimization_only_blocks_export(
+            self._endpoint, self._api_key
+        ):
             return SpanExportResult.SUCCESS
+        token = _request_suppressed.set(False)
         try:
             with _tracing()._quiet_otel_header_logs():
-                return self._inner.export(spans)
+                result = self._inner.export(spans)
+            # Some OpenTelemetry versions catch the session error internally.
+            return SpanExportResult.SUCCESS if _request_suppressed.get() else result
+        except _TraceExportSuppressed:
+            return SpanExportResult.SUCCESS
         except Exception as exc:  # noqa: BLE001 - closed message, never str(exc)
             import logging
 
@@ -116,6 +150,8 @@ class _GatedSpanExporter:
                 "trace export failed (%s); batch dropped", type(exc).__name__
             )
             return SpanExportResult.FAILURE
+        finally:
+            _request_suppressed.reset(token)
 
     def shutdown(self) -> None:
         self._inner.shutdown()
@@ -138,13 +174,17 @@ def build_gated_otlp_exporter(otlp_endpoint: str) -> tuple[Any, str | None] | No
 
     from traigent.utils import optimization_only_egress as oo_egress
 
+    if not may_send_telemetry():
+        return None
     t = _tracing()
     try:
         headers = t._resolve_trace_headers()
     except t.UnsafeTraceHeadersError:
         return None  # fail closed: malformed credentials never reach an exporter
     frozen_key = t._effective_trace_api_key(headers)
-    if not oo_egress.ensure_trace_egress_allowed(frozen_key, otlp_endpoint):
+    if not may_send_telemetry() or not oo_egress.ensure_trace_egress_allowed(
+        frozen_key, otlp_endpoint
+    ):
         return None
     with t._quiet_otel_header_logs():
         inner = OTLPSpanExporter(

@@ -24,7 +24,9 @@ from traigent.cloud.models import (
 )
 from traigent.cloud.trial_operations import TrialOperations
 from traigent.utils.artifact_fingerprints import build_dataset_only_fingerprint_payload
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
+from traigent.utils.send_policy import _usage_analytics_submission, may_send_telemetry
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -395,6 +397,11 @@ class PrivacyOperations:
                 metadata={"duration": duration},
             )
 
+            if session_submitted is None and (
+                is_backend_offline()
+                or (_usage_analytics_submission.get() and not may_send_telemetry())
+            ):
+                return False
             if not session_submitted:
                 logger.error(
                     f"Failed to submit trial results for session {session_id}, trial {trial_id}"

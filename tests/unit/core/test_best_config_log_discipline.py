@@ -228,7 +228,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_agent_head_generation_sync",
         "raise",
-        "72535b45a65c49c8",  # pragma: allowlist secret
+        "6f55993be6b06f50",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -237,7 +237,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.fetch_best_config_sync",
         "raise",
-        "343f67dfe3e706e1",  # pragma: allowlist secret
+        "bfc1bc60bb0dd8f1",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -264,7 +264,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient.publish_best_config_sync",
         "raise",
-        "e3ccb8bc5bbbab21",  # pragma: allowlist secret
+        "f373422a6adc5c08",  # pragma: allowlist secret
     ): (
         1,
         "safe_http_error_summary only",
@@ -304,7 +304,7 @@ ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
         "backend_client.py",
         "BackendIntegratedClient._post_example_feature_chunk",
         "log",
-        "cd36b3d066f1af11",  # pragma: allowlist secret
+        "c75e5e53c2f77164",  # pragma: allowlist secret
     ): (
         1,
         (

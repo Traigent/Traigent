@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
 from traigent.observability.client import ObservabilityClient
 from traigent.observability.config import ObservabilityConfig
 from traigent.observability.dtos import FlushResult
+from traigent.utils import optimization_only_egress
 
 
 def _config(**overrides) -> ObservabilityConfig:
@@ -42,22 +45,31 @@ def _timeout_used(config: ObservabilityConfig, n: int) -> float:
             return _Resp()
 
     client._http_opener = _Opener()
-    client._post_batch_sync([{"id": f"t{i}"} for i in range(n)])
+    # Stub the key-validation decision too, so no validation request can leave
+    # even when the developer's configured backend is this test's origin.
+    with mock.patch.object(
+        optimization_only_egress, "_trace_egress_decision", return_value=True
+    ):
+        client._post_batch_sync([{"id": f"t{i}"} for i in range(n)])
     return seen[0]
 
 
+@pytest.mark.backend_online
 def test_hundred_trace_batch_gets_scaled_timeout():
     assert _timeout_used(_config(), 100) == pytest.approx(20.0)
 
 
+@pytest.mark.backend_online
 def test_small_batch_keeps_configured_floor():
     assert _timeout_used(_config(), 5) == pytest.approx(10.0)
 
 
+@pytest.mark.backend_online
 def test_explicit_larger_request_timeout_is_kept():
     assert _timeout_used(_config(request_timeout=60.0), 100) == pytest.approx(60.0)
 
 
+@pytest.mark.backend_online
 def test_per_trace_timeout_is_overridable_and_zero_disables_scaling():
     assert _timeout_used(_config(per_trace_timeout=0.5), 100) == pytest.approx(50.0)
     assert _timeout_used(_config(per_trace_timeout=0), 100) == pytest.approx(10.0)

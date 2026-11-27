@@ -102,9 +102,9 @@ def describe_offline_mode_cause() -> str:
     is set, offline mode came from ``ObservabilityConfig(offline_mode=True)``.
     """
     causes = [
-        f"{name}={os.environ[name].strip()}"
+        f"{name}={value.strip()}"
         for name in _OFFLINE_MODE_ENV_VARS
-        if is_truthy(os.environ.get(name))
+        if (value := os.environ.get(name)) and is_truthy(value)
     ]
     if causes:
         return " and ".join(causes)

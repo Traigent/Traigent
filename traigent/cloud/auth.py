@@ -18,9 +18,11 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -40,6 +42,12 @@ from traigent.labels.transport_gate import (
 )
 from traigent.security.redaction import redact_sensitive_data
 from traigent.utils.exceptions import AuthenticationError as TraigentAuthenticationError
+from traigent.utils.send_policy import (
+    _is_telemetry_key_validation,
+    _telemetry_key_validation_context,
+    _TelemetryAuthSuppressed,
+    may_send_telemetry,
+)
 
 _VALIDATE_TRANSPORT_ERROR_EVENT = "auth.api_key.validate_transport_error"
 
@@ -500,6 +508,10 @@ class TokenExpiredError(AuthenticationError, ValueError):
     """Token has expired."""
 
     pass
+
+
+class _WithheldKeyValidation(str):
+    """Validator reason for a telemetry send that was withheld, not rejected."""
 
 
 class InvalidCredentialsError(AuthenticationError):
@@ -1060,6 +1072,8 @@ class AuthManager:
 
                 return result
 
+            except _TelemetryAuthSuppressed:
+                raise
             except Exception as e:
                 logger.error(f"Authentication failed: {e}")
                 self._stats["failed_authentications"] += 1
@@ -1477,6 +1491,8 @@ class AuthManager:
         # fail closed — issuing a header on a network error would let any
         # well-formatted string authenticate.
         validation_error = await self._validate_api_key_with_backend(api_key_value)
+        if isinstance(validation_error, _WithheldKeyValidation):
+            raise _TelemetryAuthSuppressed(validation_error)
         if validation_error is not None:
             session_creation_failure = getattr(
                 validation_error, "session_creation_failure", None
@@ -1776,8 +1792,13 @@ class AuthManager:
         from traigent.config.backend_config import BackendConfig
         from traigent.utils.env_config import is_backend_offline
 
-        if cloud_backend_egress_disabled(self.no_egress):
-            return AuthManager._backend_egress_reason(is_backend_offline())
+        if (reason := self._key_validation_egress_reason()) is not None:
+            return reason
+        no_egress = self.no_egress
+        if cloud_backend_egress_disabled(no_egress):
+            # Without an explicit policy, the guard has already observed offline.
+            offline = no_egress is not True or is_backend_offline()
+            return self._backend_egress_reason(offline)
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1793,6 +1814,8 @@ class AuthManager:
             backend_api_url,
             purpose="backend key validation",
         )
+        if (reason := self._key_validation_egress_reason()) is not None:
+            return reason
         url = f"{backend_api_url.rstrip('/')}/keys/validate"
 
         validation_payload = {"api_key": api_key}
@@ -1806,11 +1829,16 @@ class AuthManager:
         if not AIOHTTP_AVAILABLE:
             try:
                 loop = asyncio.get_running_loop()
+                send: Callable[..., str | None] = (
+                    self._validate_api_key_with_backend_sync
+                )
+                if _is_telemetry_key_validation():
+                    send = partial(_telemetry_key_validation_context().run, send)
                 # Default executor, not a ``with`` pool: pool exit would join
                 # the worker and hold a cancellation (#3142).
                 return await loop.run_in_executor(
                     None,
-                    self._validate_api_key_with_backend_sync,
+                    send,
                     url,
                     headers,
                     validation_payload,
@@ -1831,6 +1859,8 @@ class AuthManager:
                     trust_env=True,
                 )
             ) as session:
+                if (reason := self._key_validation_egress_reason()) is not None:
+                    return reason
                 async with session.post(
                     url,
                     headers=headers,
@@ -1873,9 +1903,27 @@ class AuthManager:
 
     @staticmethod
     def _backend_egress_reason(offline: bool) -> str:
-        if offline:
-            return "backend offline mode enabled"
-        return "backend egress disabled"
+        reason = (
+            "backend offline mode enabled" if offline else "backend egress disabled"
+        )
+        if offline and _is_telemetry_key_validation():
+            # Offline can interrupt a telemetry validation already in progress.
+            return _WithheldKeyValidation(reason)
+        return reason
+
+    def _key_validation_egress_reason(self) -> str | None:
+        """Return the reason a backend key validation is blocked, if any."""
+        from traigent.utils.env_config import is_backend_offline
+
+        if _is_telemetry_key_validation():
+            if may_send_telemetry():
+                return None
+            return (
+                self._backend_egress_reason(True)
+                if is_backend_offline()
+                else _WithheldKeyValidation("telemetry disabled")
+            )
+        return self._backend_egress_reason(True) if is_backend_offline() else None
 
     def _note_explicitly_unrestricted(self, data: Any) -> None:
         if (
@@ -2016,21 +2064,31 @@ class AuthManager:
         from traigent.cloud.client import cloud_backend_egress_disabled
         from traigent.utils.env_config import is_backend_offline
 
-        if cloud_backend_egress_disabled(self.no_egress):
-            if is_backend_offline():
-                return "backend offline mode enabled"
-            return "backend egress disabled"
+        if (reason := self._key_validation_egress_reason()) is not None:
+            return reason
+        no_egress = self.no_egress
+        if cloud_backend_egress_disabled(no_egress):
+            offline = no_egress is not True or is_backend_offline()
+            return self._backend_egress_reason(offline)
 
         try:
             validation_payload = freeze_json_body(validation_payload)
+            if (reason := self._key_validation_egress_reason()) is not None:
+                return reason
             preflight_requests("POST", url, json=validation_payload)
-            response = requests.post(
-                url,
-                headers=headers,
-                json=validation_payload,
-                timeout=15,
-                allow_redirects=False,
+            response = (
+                requests.post(
+                    url,
+                    headers=headers,
+                    json=validation_payload,
+                    timeout=15,
+                    allow_redirects=False,
+                )
+                if (reason := self._key_validation_egress_reason()) is None
+                else None
             )
+            if response is None:
+                return reason
             observe_requests_response(response)
         except requests.Timeout:
             return "backend validation timed out"

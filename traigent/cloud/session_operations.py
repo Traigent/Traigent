@@ -601,6 +601,26 @@ def _complete_session_creation(
     )
 
 
+def _offline_session_creation_result(
+    self: "SessionOperations",
+    function_name: str,
+    search_space: dict[str, Any],
+    optimization_goal: str,
+    metadata: dict[str, Any] | None,
+) -> SessionCreationResult:
+    logger.debug(
+        "Offline mode enabled — skipping backend session creation for %s", function_name
+    )
+    fallback_id = self._create_local_fallback_session(
+        function_name, search_space, optimization_goal, metadata
+    )
+    return SessionCreationResult.fallback(
+        session_id=fallback_id,
+        reason=SessionCreationFailureReason.SESSION_FAILED,
+        detail="Offline mode enabled",
+    )
+
+
 async def _create_session_async(
     self: "SessionOperations", context: dict[str, Any]
 ) -> SessionCreationResult:
@@ -624,6 +644,13 @@ async def _create_session_async(
         )
         return _complete_session_creation(
             self, context, session_api_result, max_trials_from_metadata
+        )
+
+    except CloudEgressBlockedError:
+        if not is_backend_offline():
+            raise
+        return _offline_session_creation_result(
+            self, function_name, search_space, optimization_goal, local_record_metadata
         )
 
     except ValidationException:
@@ -1164,17 +1191,12 @@ class SessionOperations:
         intends_cloud_egress = bool(getattr(self.client, "cloud_egress_intent", True))
 
         if is_backend_offline():
-            logger.debug(
-                "Offline mode enabled — skipping backend session creation for %s",
+            return _offline_session_creation_result(
+                self,
                 function_name,
-            )
-            fallback_id = self._create_local_fallback_session(
-                function_name, search_space, optimization_goal, local_record_metadata
-            )
-            return SessionCreationResult.fallback(
-                session_id=fallback_id,
-                reason=SessionCreationFailureReason.SESSION_FAILED,
-                detail="Offline mode enabled",
+                search_space,
+                optimization_goal,
+                local_record_metadata,
             )
 
         context = {
@@ -1312,6 +1334,15 @@ class SessionOperations:
         if not AIOHTTP_AVAILABLE:
             raise CloudServiceError("aiohttp not available for hybrid sessions")
 
+        from traigent.utils.send_policy import (
+            _usage_analytics_submission,
+            may_send_telemetry,
+        )
+
+        analytics = _usage_analytics_submission.get()
+        if analytics and not may_send_telemetry():
+            raise CloudEgressBlockedError("create analytics session")
+
         logger.info("Creating hybrid execution session")
         self._raise_if_backend_egress_disabled("create hybrid session")
         # The backend refuses POST /hybrid/sessions for an optimization_only workspace
@@ -1328,19 +1359,27 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
+            payload = {
+                "problem_statement": problem_statement,
+                "search_space": search_space,
+                "optimization_config": optimization_config,
+                "metadata": (
+                    filter_wire_metadata(metadata) if metadata is not None else None
+                ),
+            }
+            if analytics and not may_send_telemetry():
+                raise CloudEgressBlockedError("create analytics session")
+            self._raise_if_backend_egress_disabled("create hybrid session")
+            headers = self._with_project(
+                await self.client.auth_manager.auth.get_headers()
+            )
+            if analytics and not may_send_telemetry():
+                raise CloudEgressBlockedError("create analytics session")
+            self._raise_if_backend_egress_disabled("create hybrid session")
             async with session.post(
                 f"{api_base}/hybrid/sessions",
-                json={
-                    "problem_statement": problem_statement,
-                    "search_space": search_space,
-                    "optimization_config": optimization_config,
-                    "metadata": (
-                        filter_wire_metadata(metadata) if metadata is not None else None
-                    ),
-                },
-                headers=self._with_project(
-                    await self.client.auth_manager.auth.get_headers()
-                ),
+                json=payload,
+                headers=headers,
             ) as response:
                 if response.status != 201:
                     error_text = await response.text()
@@ -1422,11 +1461,14 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
+            self._raise_if_backend_egress_disabled("get hybrid session status")
+            headers = self._with_project(
+                await self.client.auth_manager.auth.get_headers()
+            )
+            self._raise_if_backend_egress_disabled("get hybrid session status")
             async with session.get(
                 f"{api_base}/hybrid/sessions/{session_id}/status",
-                headers=self._with_project(
-                    await self.client.auth_manager.auth.get_headers()
-                ),
+                headers=headers,
             ) as response:
                 if response.status == 200:
                     return cast(dict[str, Any], await response.json())
@@ -1474,11 +1516,14 @@ class SessionOperations:
                 self.client.backend_config.api_base_url
                 or BackendConfig.get_backend_api_url()
             )
+            self._raise_if_backend_egress_disabled("finalize hybrid session")
+            headers = self._with_project(
+                await self.client.auth_manager.auth.get_headers()
+            )
+            self._raise_if_backend_egress_disabled("finalize hybrid session")
             async with session.post(
                 f"{api_base}/hybrid/sessions/{session_id}/finalize",
-                headers=self._with_project(
-                    await self.client.auth_manager.auth.get_headers()
-                ),
+                headers=headers,
             ) as response:
                 if response.status == 200:
                     # Remove from active sessions
@@ -1978,6 +2023,8 @@ class SessionOperations:
                     finalize_body,
                     explicit=oo_egress.policy_of(self.client, headers, url),
                 )
+                if is_backend_offline():
+                    return None
                 async with session.post(
                     url,
                     json=finalize_body,
@@ -2133,9 +2180,15 @@ class SessionOperations:
                 )
                 backend_deleted = False
             else:
-                backend_deleted = await self._delete_session_via_api(session_id)
-                if not backend_deleted:
-                    return False
+                try:
+                    backend_deleted = await self._delete_session_via_api(session_id)
+                except CloudEgressBlockedError:
+                    if not is_backend_offline():
+                        raise
+                    backend_deleted = False
+                else:
+                    if not backend_deleted:
+                        return False
 
             mapping = self.client.session_bridge.get_session_mapping(session_id)
             if mapping:
@@ -2163,12 +2216,15 @@ class SessionOperations:
             )
             url = f"{api_base}/sessions/{session_id}"
 
+            self._raise_if_backend_egress_disabled("delete session")
+            headers = self._with_project(
+                await self.client.auth_manager.auth.get_headers()
+            )
+            self._raise_if_backend_egress_disabled("delete session")
             async with session.delete(
                 url,
                 params={"cascade": "true"},
-                headers=self._with_project(
-                    await self.client.auth_manager.auth.get_headers()
-                ),
+                headers=headers,
             ) as response:
                 if response.status in {200, 202, 204}:
                     return True

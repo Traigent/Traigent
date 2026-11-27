@@ -481,6 +481,8 @@ class EconomicsTelemetryClient:
     # -- request / response -----------------------------------------------------
 
     async def _post_with_retry(self, content: bytes, headers: dict[str, str]) -> Any:
+        from traigent.utils.env_config import raise_if_backend_offline
+
         # optimization_only: telemetry is not part of the optimization loop. It is already
         # schema-validated, but it is only sent when the whole body is closed values
         # (identifier keys; identifier/digest/number leaves); otherwise refused locally.
@@ -513,6 +515,7 @@ class EconomicsTelemetryClient:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             is_last = attempt + 1 >= self.max_retries
+            raise_if_backend_offline("EconomicsTelemetryClient request")
             try:
                 response = await client.post(
                     TELEMETRY_ENDPOINT, content=content, headers=headers

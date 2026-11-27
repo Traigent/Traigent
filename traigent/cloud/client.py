@@ -1371,9 +1371,11 @@ class TraigentCloudClient(BaseTraigentClient):
 
         async def submit_request():
             """Internal function to submit request with proper error handling."""
+            self._raise_if_backend_egress_disabled("submit optimization")
             headers = await self._get_headers()
             headers["Idempotency-Key"] = idempotency_key
             try:
+                self._raise_if_backend_egress_disabled("submit optimization")
                 async with session.post(
                     url, json=request_data, headers=headers
                 ) as response:
@@ -1407,6 +1409,8 @@ class TraigentCloudClient(BaseTraigentClient):
         try:
             result = await submit_with_retry()
             return cast(dict[str, Any], result)
+        except CloudEgressBlockedError:
+            raise
         except Exception as e:
             if hasattr(e, "last_exception") and isinstance(
                 e.last_exception, CloudServiceError
@@ -1531,10 +1535,13 @@ class TraigentCloudClient(BaseTraigentClient):
 
             url = f"{self.api_base_url}/optimization/recommendations"
             params = _tvar_recommendations_params(agent_type, metric, tvar_names)
+            headers = await self._get_headers()
+            if cloud_backend_egress_disabled(self.no_egress):
+                return RecommendationBundle.empty()
             request = self._aio_session.get(
                 url,
                 params=params,
-                headers=await self._get_headers(),
+                headers=headers,
             )
             response_candidate = (
                 await request if asyncio.iscoroutine(request) else request
@@ -1618,7 +1625,9 @@ class TraigentCloudClient(BaseTraigentClient):
             dict with status on success/final failure, or None to signal retry.
         """
         self._raise_if_backend_egress_disabled("check service status")
-        request = self._aio_session.get(url, headers=await self._get_headers())  # type: ignore[union-attr]
+        headers = await self._get_headers()
+        self._raise_if_backend_egress_disabled("check service status")
+        request = self._aio_session.get(url, headers=headers)  # type: ignore[union-attr]
         response_candidate = await request if asyncio.iscoroutine(request) else request
 
         if hasattr(response_candidate, "__aenter__"):
@@ -1718,8 +1727,10 @@ class TraigentCloudClient(BaseTraigentClient):
         params = {"cascade": "true" if cascade else "false"}
 
         try:
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("delete session")
             async with self._aio_session.delete(
-                url, params=params, headers=await self._get_headers()
+                url, params=params, headers=headers
             ) as response:
                 if response.status in {200, 202, 204}:
                     self._session_owners.pop(session_id, None)
@@ -1782,8 +1793,10 @@ class TraigentCloudClient(BaseTraigentClient):
 
         url = f"{self.api_base_url}/sessions"
         try:
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("list sessions")
             async with self._aio_session.get(
-                url, params=params, headers=await self._get_headers()
+                url, params=params, headers=headers
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -1913,6 +1926,7 @@ class TraigentCloudClient(BaseTraigentClient):
             send_options: dict[str, Any] = (
                 {"allow_redirects": False} if crew_declaration_sent else {}
             )
+            self._raise_if_backend_egress_disabled("create session")
             async with self._aio_session.post(
                 url, json=request_data, headers=headers, **send_options
             ) as response:
@@ -2020,6 +2034,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 session_id=session_id,
             )
 
+            self._raise_if_backend_egress_disabled("get next trial")
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
             ) as response:
@@ -2116,6 +2131,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 session_id=session_id,
             )
 
+            self._raise_if_backend_egress_disabled("submit trial result")
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
             ) as response:
@@ -2174,6 +2190,7 @@ class TraigentCloudClient(BaseTraigentClient):
                 explicit=oo_egress.policy_of(self, headers, url),
             )
 
+            self._raise_if_backend_egress_disabled("finalize session")
             async with self._aio_session.post(
                 url, json=request_data, headers=headers
             ) as response:
@@ -2541,10 +2558,12 @@ class TraigentCloudClient(BaseTraigentClient):
             url = f"{self.api_base_url}/agent/optimize"
             payload = self._serialize_agent_optimization_request(request)
 
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("start agent optimization")
             async with self._aio_session.post(
                 url,
                 json=payload,
-                headers=await self._get_headers(),
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=300),  # 5 minute timeout
             ) as response:
                 if response.status == 200:
@@ -2568,6 +2587,8 @@ class TraigentCloudClient(BaseTraigentClient):
             raise_detached(
                 CloudServiceError(f"Network error starting agent optimization: {e}")
             )
+        except CloudEgressBlockedError:
+            raise
         except Exception as e:
             await self._reset_http_session("agent_optimize failure")
             raise_detached(
@@ -2623,10 +2644,12 @@ class TraigentCloudClient(BaseTraigentClient):
             url = f"{self.api_base_url}/agent/execute"
             payload = self._serialize_agent_execution_request(request)
 
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("execute agent")
             async with self._aio_session.post(
                 url,
                 json=payload,
-                headers=await self._get_headers(),
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=120),  # 2 minute timeout
             ) as response:
                 if response.status == 200:
@@ -2643,6 +2666,8 @@ class TraigentCloudClient(BaseTraigentClient):
         except aiohttp.ClientError as e:
             await self._reset_http_session("agent_execute network error")
             raise_detached(CloudServiceError(f"Network error executing agent: {e}"))
+        except CloudEgressBlockedError:
+            raise
         except Exception as e:
             await self._reset_http_session("agent_execute failure")
             raise_detached(CloudServiceError(f"Network error executing agent: {e}"))
@@ -2669,9 +2694,11 @@ class TraigentCloudClient(BaseTraigentClient):
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/status"
 
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("get agent optimization status")
             async with self._aio_session.get(
                 url,
-                headers=await self._get_headers(),
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 if response.status == 200:
@@ -2688,6 +2715,8 @@ class TraigentCloudClient(BaseTraigentClient):
             raise_detached(
                 CloudServiceError(f"Network error getting optimization status: {e}")
             )
+        except CloudEgressBlockedError:
+            raise
         except Exception as e:
             await self._reset_http_session("agent_status failure")
             raise_detached(
@@ -2714,9 +2743,11 @@ class TraigentCloudClient(BaseTraigentClient):
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/cancel"
 
+            headers = await self._get_headers()
+            self._raise_if_backend_egress_disabled("cancel agent optimization")
             async with self._aio_session.post(
                 url,
-                headers=await self._get_headers(),
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 if response.status == 200:
@@ -2732,6 +2763,8 @@ class TraigentCloudClient(BaseTraigentClient):
             raise_detached(
                 CloudServiceError(f"Network error canceling optimization: {e}")
             )
+        except CloudEgressBlockedError:
+            raise
         except Exception as e:
             await self._reset_http_session("agent_cancel failure")
             raise_detached(

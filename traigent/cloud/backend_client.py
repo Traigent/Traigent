@@ -20,6 +20,7 @@ import weakref
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from functools import partial
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -111,11 +112,17 @@ from traigent.labels.transport_gate import (
 )
 from traigent.security.session_manager import SessionManager as SecuritySessionManager
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import RetryableError
 from traigent.utils.logging import get_logger
 from traigent.utils.numeric_validation import positive_int_env
 from traigent.utils.optimization_only_egress import parse_flag
 from traigent.utils.retry import RetryConfig, RetryHandler
+from traigent.utils.send_policy import (
+    _telemetry_key_validation,
+    _telemetry_key_validation_context,
+    _TelemetryAuthSuppressed,
+)
 from traigent.utils.thread_timeout import run_in_thread_with_timeout
 
 BACKEND_CLIENT = "backend client"
@@ -494,7 +501,7 @@ def _run_sync_backend_request_with_retry(
         return result.result
 
     error = result.error
-    if isinstance(error, AuthenticationError):
+    if isinstance(error, (AuthenticationError, CloudEgressBlockedError)):
         raise error
     # Fixed text only: the transient errors above carry a pre-sanitized message; any
     # other failure (e.g. a ``requests`` InvalidHeader quoting a header value) is named
@@ -1548,6 +1555,9 @@ class BackendIntegratedClient:
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+                # Live recheck: egress may have been disabled since the entry check.
+                if cloud_backend_egress_disabled(self.no_egress):
+                    return self._static_interaction_policy()
                 async with session.get(
                     url,
                     headers=headers,
@@ -1731,6 +1741,13 @@ class BackendIntegratedClient:
 
     async def __aenter__(self) -> "BackendIntegratedClient":
         """Async context manager entry."""
+        from traigent.utils.send_policy import (
+            _usage_analytics_submission,
+            may_send_telemetry,
+        )
+
+        if _usage_analytics_submission.get() and not may_send_telemetry():
+            return self
         if cloud_backend_egress_disabled(self.no_egress):
             return self
         # Fail closed on an unusable backend URL: the placeholder origin set in
@@ -1747,7 +1764,7 @@ class BackendIntegratedClient:
             # Other exceptions (e.g. Edge Analytics mode without a key) continue.
             try:
                 await self.auth_manager.auth.get_headers()
-            except AuthenticationError:
+            except (AuthenticationError, _TelemetryAuthSuppressed):
                 raise
             except Exception as e:
                 # In Edge Analytics mode or when no API key is available, continue without auth
@@ -1807,7 +1824,7 @@ class BackendIntegratedClient:
         # credential change, so each request sends its current credentials.
         try:
             await self.auth_manager.auth.get_headers()
-        except AuthenticationError:
+        except (AuthenticationError, _TelemetryAuthSuppressed):
             # Do NOT fall back to raw-key headers. Re-raise so callers
             # see the auth failure instead of getting a session that
             # silently emits a rejected key.
@@ -1929,6 +1946,11 @@ class BackendIntegratedClient:
         if getattr(self, "_url_invalid", False) is True:
             raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
+
+    def _backend_url_for_send(self, url: str, operation: str) -> str:
+        """Recheck egress after preflight, while evaluating the HTTP call's URL."""
+        self._raise_if_backend_egress_disabled(operation)
+        return url
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the running loop's aiohttp session."""
@@ -2357,12 +2379,13 @@ class BackendIntegratedClient:
                 in_running_loop = False
 
             if in_running_loop:
-                headers = run_in_thread_with_timeout(
-                    _run_in_new_loop, min(self.timeout, 30.0)
-                )
+                run: Callable[[], dict[str, str]] = _run_in_new_loop
+                if _telemetry_key_validation.get():
+                    run = partial(_telemetry_key_validation_context().run, run)
+                headers = run_in_thread_with_timeout(run, min(self.timeout, 30.0))
             else:
                 headers = asyncio.run(_get_headers_async())
-        except AuthenticationError:
+        except (AuthenticationError, _TelemetryAuthSuppressed):
             # Re-raise: a backend-rejected key must NEVER be downgraded to a
             # silent unauthenticated POST. Callers (e.g.
             # ``upload_example_features``) catch this and abort before any
@@ -2588,13 +2611,19 @@ class BackendIntegratedClient:
         def _get_head() -> Any:
             try:
                 preflight_requests("GET", url, params=params)
-                response = requests.get(  # nosec B113 - timeout is provided
-                    url,
-                    params=params,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                response = (
+                    requests.get(  # nosec B113 - timeout is provided
+                        url,
+                        params=params,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if not is_backend_offline()
+                    else None
                 )
+                if response is None:
+                    return None
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -2610,6 +2639,8 @@ class BackendIntegratedClient:
         response = _run_sync_backend_request_with_retry(
             AGENT_HEAD_FETCH, _get_head, self.max_retries
         )
+        if response is None:
+            raise CloudEgressBlockedError("fetch agent head")
         _refuse_redirect_response(response, AGENT_HEAD_FETCH)
         if response.status_code >= 400:
             raise CloudServiceError(
@@ -2695,6 +2726,7 @@ class BackendIntegratedClient:
 
         session = gate_session(requests.Session(), origins=[url], strict=True)
         try:
+            self._raise_if_backend_egress_disabled(operation)
             return session.request(
                 method,
                 url,
@@ -3004,9 +3036,10 @@ class BackendIntegratedClient:
         def _post_best_config() -> Any:
             try:
                 body_json = freeze_json_body(payload)
+                self._raise_if_backend_egress_disabled("publish best config")
                 preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
-                    url,
+                    self._backend_url_for_send(url, "publish best config"),
                     json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
@@ -3165,13 +3198,19 @@ class BackendIntegratedClient:
         def _get_best_config() -> Any:
             try:
                 preflight_requests("GET", url, params=params or None)
-                response = requests.get(  # nosec B113 - timeout is provided
-                    url,
-                    params=params or None,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                response = (
+                    requests.get(  # nosec B113 - timeout is provided
+                        url,
+                        params=params or None,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if not is_backend_offline()
+                    else None
                 )
+                if response is None:
+                    return None
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
@@ -3189,6 +3228,8 @@ class BackendIntegratedClient:
             _get_best_config,
             self.max_retries,
         )
+        if response is None:
+            raise CloudEgressBlockedError("fetch best config")
         if response.status_code == 304:
             # Not Modified answers the If-None-Match conditional fetch. It is not a
             # redirect: nothing is followed and no Location is read, so it is answered
@@ -3265,9 +3306,10 @@ class BackendIntegratedClient:
         # host and accept key material from it. A (connect, read) timeout pair
         # bounds a stalled Backend; the body is a few hundred bytes, so the
         # read limit effectively bounds the whole answer.
+        self._raise_if_backend_egress_disabled("fetch content-identity keys")
         preflight_requests("POST", url)
         response = requests.post(  # nosec B113 - timeout is provided
-            url,
+            self._backend_url_for_send(url, "fetch content-identity keys"),
             headers=headers,
             timeout=(min(self.timeout, 5.0), min(self.timeout, 10.0)),
             allow_redirects=False,
@@ -3327,10 +3369,11 @@ class BackendIntegratedClient:
         code: str | None = None
         try:
             body = freeze_json_body(body)
+            self._raise_if_backend_egress_disabled("call the process-record service")
             preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
-                url,
+                self._backend_url_for_send(url, "call the process-record service"),
                 headers=headers,
                 json=body,
                 timeout=(min(self.timeout, 5.0), self.timeout),
@@ -3342,9 +3385,8 @@ class BackendIntegratedClient:
                 code = _envelope_error_code(response)
             else:
                 payload = response.json()
-        except TransportGateRefusal:
-            # Counts-only refusal (route + counts + cause type name): safe to
-            # propagate, and must not be masked as a transport error.
+        except (CloudEgressBlockedError, TransportGateRefusal):
+            # Policy refusals carry no request or response content.
             raise
         except Exception:  # noqa: BLE001 - closed re-raise below
             failure = "TRANSPORT_ERROR"
@@ -3379,7 +3421,11 @@ class BackendIntegratedClient:
         features: list[dict[str, Any]] | dict[str, Any],
     ) -> bool:
         """Upload per-run example features for backend-side analytics."""
+        from traigent.utils.send_policy import may_send_telemetry
+
         self._raise_if_backend_egress_disabled("upload example features")
+        if not may_send_telemetry():
+            return False
         # Per-example features describe the dataset: not available in this mode.
         oo_egress.refuse_if_active(
             "example_feature_upload", explicit=oo_egress.policy_of(self)
@@ -3407,8 +3453,11 @@ class BackendIntegratedClient:
         # ``CloudServiceError`` from an unexpected failure), do NOT issue an
         # unauthenticated POST. Short-circuit and return False -- the
         # request must never go out without auth.
+        validation = _telemetry_key_validation.set(True)
         try:
             headers = self._get_sync_auth_headers(target="backend")
+        except _TelemetryAuthSuppressed:  # silent-ok: telemetry opt-out or offline withheld this upload; returning False is the uploader's existing not-sent result
+            return False
         except AuthenticationError as exc:
             logger.debug(
                 "Skipping example feature upload for run %s: auth rejected (%s)",
@@ -3422,6 +3471,10 @@ class BackendIntegratedClient:
                 experiment_run_id,
                 exc,
             )
+            return False
+        finally:
+            _telemetry_key_validation.reset(validation)
+        if not may_send_telemetry():
             return False
         url = self._build_feature_upload_url(experiment_run_id)
         if not url:
@@ -3468,6 +3521,10 @@ class BackendIntegratedClient:
         headers: dict[str, str],
     ) -> bool:
         """POST one feature chunk; True when the service accepted it."""
+        from traigent.utils.send_policy import may_send_telemetry
+
+        if not may_send_telemetry():
+            return False
         # Re-check policy at the send site: the chunk path must refuse exactly
         # like the single-request upload when egress is disallowed.
         self._raise_if_backend_egress_disabled("upload example features")
@@ -3477,16 +3534,26 @@ class BackendIntegratedClient:
         payload = {"feature_kind": feature_kind, "features": features}
 
         def _post_example_features() -> Any:
+            if not may_send_telemetry():
+                return None
             try:
                 body_json = freeze_json_body(payload)
+                if not may_send_telemetry():
+                    return None
                 preflight_requests("POST", url, json=body_json)
-                response = requests.post(  # nosec B113 - timeout is provided
-                    url,
-                    json=body_json,
-                    headers=headers,
-                    timeout=min(self.timeout, 30.0),
-                    allow_redirects=False,
+                response = (
+                    requests.post(  # nosec B113 - timeout is provided
+                        url,
+                        json=body_json,
+                        headers=headers,
+                        timeout=min(self.timeout, 30.0),
+                        allow_redirects=False,
+                    )
+                    if may_send_telemetry()
+                    else None
                 )
+                if response is None:
+                    return None
                 observe_requests_response(response)
             except (
                 requests.exceptions.ConnectionError,
@@ -3507,6 +3574,8 @@ class BackendIntegratedClient:
             _post_example_features,
             self.max_retries,
         )
+        if response is None:
+            return False
         _refuse_redirect_response(response, EXAMPLE_FEATURE_UPLOAD)
 
         if response.status_code >= 400:

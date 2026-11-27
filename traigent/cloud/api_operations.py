@@ -588,6 +588,10 @@ class ApiOperations:
                     connector,
                     typed_exc,
                 )
+        except CloudEgressBlockedError as exc:
+            if is_backend_offline():
+                raise
+            self._handle_generic_session_exception(exc)
         except SessionContractError:
             # Review round 3: contract failures must reach the caller AS
             # THEMSELVES — the generic wrap below would demote them to a
@@ -1106,6 +1110,7 @@ class ApiOperations:
                 {"allow_redirects": False} if crew_declaration_sent else {}
             )
 
+            self._raise_if_backend_egress_disabled("create session")
             async with session.post(
                 url,
                 json=payload,
@@ -1316,6 +1321,8 @@ class ApiOperations:
                 except oo_egress.MetadataContractViolation:
                     logger.debug("optimization_only: intermediate report not sent")
                     return {"prune": False, "prune_reason": None}
+                if is_backend_offline():
+                    return {"prune": False, "prune_reason": None}
                 async with session.post(
                     url,
                     json=wire_payload,
@@ -1476,6 +1483,8 @@ class ApiOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
+                if is_backend_offline():
+                    raise CloudEgressBlockedError("update configuration run status")
                 async with session.put(
                     url,
                     json=status_data,
@@ -1499,6 +1508,8 @@ class ApiOperations:
             # Strict self-hosted mode: fail closed, never degrade silently.
             raise
         except Exception as e:
+            if isinstance(e, CloudEgressBlockedError) and is_backend_offline():
+                raise
             logger.debug(f"Error updating config run status: {e}")
             return False
 
@@ -1623,6 +1634,8 @@ class ApiOperations:
             # Strict self-hosted mode: fail closed, never degrade silently.
             raise
         except Exception as e:
+            if isinstance(e, CloudEgressBlockedError) and is_backend_offline():
+                raise
             logger.debug(f"Error updating config run measures: {e}")
             return False
 
@@ -1716,6 +1729,8 @@ class ApiOperations:
                 explicit=oo_egress.policy_of(self.client, headers, url),
             )
 
+            if is_backend_offline():
+                raise CloudEgressBlockedError("update configuration run measures")
             async with session.put(
                 url,
                 json=measures_data,
@@ -1793,6 +1808,8 @@ class ApiOperations:
                     explicit=oo_egress.policy_of(self.client, headers, url),
                 )
 
+                if is_backend_offline():
+                    raise CloudEgressBlockedError("update experiment run status")
                 async with session.put(
                     url,
                     json=run_status_body,
@@ -1812,6 +1829,8 @@ class ApiOperations:
         except EndpointNotConfiguredError:
             logger.warning(endpoint_missing_message("experiment run status update"))
         except Exception as e:
+            if isinstance(e, CloudEgressBlockedError) and is_backend_offline():
+                raise
             logger.warning(f"Error updating experiment run status: {e}")
 
     # Cloud API Methods

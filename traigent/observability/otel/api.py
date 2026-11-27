@@ -54,6 +54,7 @@ from traigent.security.redaction import redact_sensitive_data
 from traigent.utils import optimization_only_egress as oo_egress
 from traigent.utils.env_config import is_backend_offline, is_truthy
 from traigent.utils.logging import get_logger
+from traigent.utils.send_policy import may_send_telemetry
 
 logger = get_logger(__name__)
 
@@ -231,7 +232,7 @@ def _preflight_allows_export(
             return True  # _init_api_key raises the usual error below
     except Exception:  # noqa: BLE001 - config errors surface later, in order
         return True
-    return oo_egress.ensure_trace_egress_allowed(key, endpoint)
+    return may_send_telemetry() and oo_egress.ensure_trace_egress_allowed(key, endpoint)
 
 
 def _init_provider(
