@@ -58,6 +58,10 @@ _SESSION_ID_TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
 _SESSION_ID_TIME_LENGTH = 22
 # Extra wait for the collector thread beyond its own budget before giving up.
 _SUBMIT_SCAN_MARGIN_SECONDS = 1.0
+# Last collector thread; a stalled read must not be joined by new ones.
+_COLLECTOR_LOCK = threading.Lock()
+_COLLECTOR_THREAD: threading.Thread | None = None
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
@@ -229,12 +233,27 @@ class LocalAnalytics:
                     if entry.name.endswith(".json"):
                         names.append(entry.name[: -len(".json")])
         except OSError:
-            pass
+            enumerated_fully = False
         # Timestamp ids newest-first, then ids that do not encode a time.
-        timed = sorted((n for n in names if self._session_id_time(n)), reverse=True)
-        untimed = sorted(n for n in names if not self._session_id_time(n))
-        all_parsed = not untimed
-        names = timed + untimed
+        timed_pairs: list[tuple[datetime, str]] = []
+        untimed: list[str] = []
+        parsed_fully = True
+        for index, name in enumerate(names):
+            if index % 256 == 0 and time.monotonic() > deadline:
+                parsed_fully = False
+                untimed.extend(names[index:])
+                break
+            stamp = self._session_id_time(name)
+            if stamp is None:
+                untimed.append(name)
+            else:
+                timed_pairs.append((stamp, name))
+        timed_pairs.sort(reverse=True)
+        untimed.sort()
+        all_parsed = not untimed and parsed_fully
+        if not parsed_fully:
+            enumerated_fully = False
+        names = [n for _, n in timed_pairs] + untimed
         sessions: list[Any] = []
         read_fully = enumerated_fully
         for name in names:
@@ -396,9 +415,7 @@ class LocalAnalytics:
             return
         tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
-            fd = os.open(
-                tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
-            )
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as handle:
                 handle.write(first_use.isoformat())
             os.replace(tmp, target)
@@ -410,7 +427,7 @@ class LocalAnalytics:
                 pass
 
     def _read_first_use(self) -> str:
-        fd = os.open(self._first_use_file(), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(self._first_use_file(), os.O_RDONLY | _O_NOFOLLOW)
         with os.fdopen(fd) as handle:
             return handle.read().strip()
 
@@ -489,6 +506,7 @@ class LocalAnalytics:
         which ``asyncio.run`` joins at shutdown). Returns None if it overran
         ``budget`` plus a margin; the abandoned daemon thread cannot block exit.
         """
+        global _COLLECTOR_THREAD
         result: concurrent.futures.Future[dict[str, Any]] = concurrent.futures.Future()
 
         def work() -> None:
@@ -505,7 +523,15 @@ class LocalAnalytics:
             except concurrent.futures.InvalidStateError:
                 pass  # the caller already gave up
 
-        threading.Thread(target=work, name="traigent-usage-stats", daemon=True).start()
+        with _COLLECTOR_LOCK:
+            if _COLLECTOR_THREAD is not None and _COLLECTOR_THREAD.is_alive():
+                logger.debug("Previous usage stats collection still running; skipping")
+                return None
+            thread = threading.Thread(
+                target=work, name="traigent-usage-stats", daemon=True
+            )
+            _COLLECTOR_THREAD = thread
+            thread.start()
         try:
             return await asyncio.wait_for(
                 asyncio.wrap_future(result),

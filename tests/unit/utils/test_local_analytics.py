@@ -1320,6 +1320,11 @@ class TestEdgeCases:
 class TestSubmitDoesNotStallEventLoop:
     """The orchestrator wraps submit_usage_stats in wait_for(timeout=10)."""
 
+    @pytest.fixture(autouse=True)
+    def _fresh_collector_slot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An abandoned collector from an earlier test must not block this one.
+        monkeypatch.setattr("traigent.utils.local_analytics._COLLECTOR_THREAD", None)
+
     @staticmethod
     def _config(path: str) -> TraigentConfig:
         return TraigentConfig(
@@ -1430,11 +1435,14 @@ class TestSubmitDoesNotStallEventLoop:
 
         monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
         analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
-        monkeypatch.setattr(
-            LocalAnalytics,
-            "collect_usage_stats",
-            lambda self_, *a, **k: time.sleep(2.0) or {"total_sessions": 1},
-        )
+        calls: list[int] = []
+
+        def slow_collect(self_: Any, *a: Any, **k: Any) -> dict[str, Any]:
+            calls.append(1)
+            time.sleep(2.0)
+            return {"total_sessions": 1}
+
+        monkeypatch.setattr(LocalAnalytics, "collect_usage_stats", slow_collect)
 
         async def run() -> None:
             try:
@@ -1453,6 +1461,7 @@ class TestSubmitDoesNotStallEventLoop:
             ),
         ):
             asyncio.run(run())
+        assert calls  # the collector really ran, so no early refusal passed this
         assert time.monotonic() - start < 1.0
 
     def test_no_api_key_never_lists_sessions(
@@ -1562,3 +1571,48 @@ class TestSubmitDoesNotStallEventLoop:
             (sessions_dir / f"{name}.json").write_text("{}")
         analytics.collect_usage_stats(time_budget=0.03)
         assert not (Path(analytics.storage.storage_path) / ".first_use").exists()
+
+    def test_stalled_collector_is_not_joined_by_new_threads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import threading
+
+        import traigent.utils.local_analytics as module
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        monkeypatch.setattr(module, "_COLLECTOR_THREAD", None)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        release = threading.Event()
+        started: list[int] = []
+
+        def blocked(self_: Any, *a: Any, **k: Any) -> dict[str, Any]:
+            started.append(1)
+            release.wait(10)
+            return {}
+
+        monkeypatch.setattr(LocalAnalytics, "collect_usage_stats", blocked)
+        monkeypatch.setattr(module, "_SUBMIT_SCAN_BUDGET_SECONDS", 0.1)
+        monkeypatch.setattr(module, "_SUBMIT_SCAN_MARGIN_SECONDS", 0.1)
+
+        async def go() -> list[dict[str, Any]]:
+            return [
+                await analytics.submit_usage_stats(),
+                await analytics.submit_usage_stats(),
+            ]
+
+        try:
+            with (
+                patch.object(module, "may_send_telemetry", return_value=True),
+                patch.object(module, "usage_analytics_allowed", return_value=True),
+            ):
+                first, second = asyncio.run(go())
+        finally:
+            release.set()
+        assert first["reason"] == second["reason"] == "Request timeout"
+        assert len(started) == 1
+
+    def test_scandir_oserror_marks_listing_incomplete(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        with patch("os.scandir", side_effect=OSError("boom")):
+            assert analytics._scan_sessions(1.0)["enumerated_fully"] is False
