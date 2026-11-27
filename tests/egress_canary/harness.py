@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import socket
 import threading
@@ -607,6 +608,8 @@ class EgressCapture:
     def install(self) -> EgressCapture:
         from contextlib import ExitStack
 
+        require_litellm_local_cost_map()
+
         stack = ExitStack()
         self._stack = stack
         self._patch_aiohttp(stack)
@@ -805,6 +808,15 @@ class EgressCapture:
         )
 
     # -- sockets -----------------------------------------------------------
+    # litellm 1.111 fetches its price table through a native client that none of
+    # the patches below can see. That is acceptable here: under this harness
+    # LITELLM_LOCAL_MODEL_COST_MAP is already set (tests/conftest.py, and
+    # traigent/__init__.py unless TRAIGENT_LITELLM_LIVE_PRICES is set), so litellm
+    # never fetches. The pin is guarded by
+    # tests/unit/test_import_side_effects.py::test_import_traigent_pins_litellm_to_local_cost_map
+    # and the precondition is asserted by
+    # tests/egress_canary/test_litellm_native_fetch_precondition.py. The detector
+    # that does watch the native fetch is scripts/security/behaviour_audit.py.
     def _patch_socket(self, stack: Any) -> None:
         capture = self
 
@@ -830,6 +842,21 @@ class EgressCapture:
         stack.enter_context(mock.patch.object(socket.socket, "connect", connect))
         stack.enter_context(mock.patch.object(socket.socket, "connect_ex", connect_ex))
         stack.enter_context(mock.patch.object(socket, "getaddrinfo", getaddrinfo))
+
+
+def require_litellm_local_cost_map() -> None:
+    """Fail loudly if litellm could fetch its price table under a capture.
+
+    The capture cannot see litellm's native fetch, so it is only sound while
+    the local-cost-map pin is on (litellm reads the value case-insensitively
+    and only "true" counts).
+    """
+    value = os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP", "")
+    if value.lower() != "true":
+        raise AssertionError(
+            "egress capture does not watch litellm's native price fetch; "
+            f"LITELLM_LOCAL_MODEL_COST_MAP must be 'true' (got {value!r})"
+        )
 
 
 @contextmanager
