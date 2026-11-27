@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Since 0.34.0, running the keyless quickstart inside CI requires the same approval as any other run: set `TRAIGENT_RUN_APPROVED=1` (optionally `TRAIGENT_APPROVED_BY`). 0.34.0 shipped this change without a note.
+- Documented that with litellm 1.111.0, importing litellm before traigent on a host without network can make the process exit non-zero; import traigent first or set LITELLM_LOCAL_MODEL_COST_MAP=True.
 
 ## [0.34.2] - 2026-11-24
 
