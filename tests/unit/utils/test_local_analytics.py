@@ -1329,6 +1329,9 @@ class TestSubmitDoesNotStallEventLoop:
         if leftover is not None:
             leftover.join(timeout=2.5)
         monkeypatch.setattr("traigent.utils.local_analytics._COLLECTOR_THREAD", None)
+        monkeypatch.setattr(
+            "traigent.utils.local_analytics._COLLECTOR_DONE", None, raising=False
+        )
 
     @staticmethod
     def _config(path: str) -> TraigentConfig:
@@ -1587,6 +1590,7 @@ class TestSubmitDoesNotStallEventLoop:
 
         monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
         monkeypatch.setattr(module, "_COLLECTOR_THREAD", None)
+        monkeypatch.setattr(module, "_COLLECTOR_DONE", None, raising=False)
         analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
         release = threading.Event()
         started: list[int] = []
@@ -1621,3 +1625,49 @@ class TestSubmitDoesNotStallEventLoop:
         analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
         with patch("os.scandir", side_effect=OSError("boom")):
             assert analytics._scan_sessions(1.0)["enumerated_fully"] is False
+
+    def test_slot_is_occupied_between_assignment_and_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import threading
+
+        import traigent.utils.local_analytics as module
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        ran: list[int] = []
+        monkeypatch.setattr(
+            LocalAnalytics,
+            "collect_usage_stats",
+            lambda self_, *a, **k: ran.append(1) or {},
+        )
+        entered, gate = threading.Event(), threading.Event()
+        real_start = threading.Thread.start
+
+        def held_start(thread: threading.Thread) -> None:
+            if thread.name == "traigent-usage-stats" and not entered.is_set():
+                entered.set()
+                gate.wait(5)
+            real_start(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", held_start)
+        second: list[dict[str, Any]] = []
+
+        def first_submit() -> None:
+            asyncio.run(analytics.submit_usage_stats())
+
+        with (
+            patch.object(module, "may_send_telemetry", return_value=True),
+            patch.object(module, "usage_analytics_allowed", return_value=True),
+        ):
+            worker = threading.Thread(target=first_submit)
+            worker.start()
+            try:
+                assert entered.wait(5)
+                second.append(asyncio.run(analytics.submit_usage_stats()))
+            finally:
+                gate.set()
+                worker.join(5)
+        assert second[0]["reason"] == "Request timeout"
+        assert len(ran) == 1

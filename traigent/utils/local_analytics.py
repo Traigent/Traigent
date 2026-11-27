@@ -61,13 +61,17 @@ _SUBMIT_SCAN_MARGIN_SECONDS = 1.0
 # Last collector thread; a stalled read must not be joined by new ones.
 _COLLECTOR_LOCK = threading.Lock()
 _COLLECTOR_THREAD: threading.Thread | None = None
+# Set when the current collector has finished (or failed to start): the slot
+# stays occupied until then, including between assignment and start().
+_COLLECTOR_DONE: threading.Event | None = None
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def _reset_collector_after_fork() -> None:
-    global _COLLECTOR_LOCK, _COLLECTOR_THREAD
+    global _COLLECTOR_LOCK, _COLLECTOR_THREAD, _COLLECTOR_DONE
     _COLLECTOR_LOCK = threading.Lock()
     _COLLECTOR_THREAD = None
+    _COLLECTOR_DONE = None
 
 
 if hasattr(os, "register_at_fork"):
@@ -518,33 +522,42 @@ class LocalAnalytics:
         which ``asyncio.run`` joins at shutdown). Returns None if it overran
         ``budget`` plus a margin; the abandoned daemon thread cannot block exit.
         """
-        global _COLLECTOR_THREAD
+        global _COLLECTOR_THREAD, _COLLECTOR_DONE
         result: concurrent.futures.Future[dict[str, Any]] = concurrent.futures.Future()
+
+        done = threading.Event()
 
         def work() -> None:
             try:
-                outcome = self.collect_usage_stats(budget)
-            except BaseException as exc:  # hand any failure back to the caller
                 try:
-                    result.set_exception(exc)
+                    outcome = self.collect_usage_stats(budget)
+                except BaseException as exc:  # hand any failure back to the caller
+                    try:
+                        result.set_exception(exc)
+                    except concurrent.futures.InvalidStateError:
+                        pass
+                    return
+                try:
+                    result.set_result(outcome)
                 except concurrent.futures.InvalidStateError:
-                    pass
-                return
-            try:
-                result.set_result(outcome)
-            except concurrent.futures.InvalidStateError:
-                pass  # the caller already gave up
+                    pass  # the caller already gave up
+            finally:
+                done.set()
 
         thread = threading.Thread(target=work, name="traigent-usage-stats", daemon=True)
         with _COLLECTOR_LOCK:
-            current = _COLLECTOR_THREAD
-            alive = current is not None and current.is_alive()
-            if not alive:
+            occupied = _COLLECTOR_DONE is not None and not _COLLECTOR_DONE.is_set()
+            if not occupied:
                 _COLLECTOR_THREAD = thread
-        if alive:
+                _COLLECTOR_DONE = done
+        if occupied:
             logger.debug("Previous usage stats collection still running; skipping")
             return None
-        thread.start()
+        try:
+            thread.start()
+        except BaseException:
+            done.set()
+            raise
         try:
             return await asyncio.wait_for(
                 asyncio.wrap_future(result),
