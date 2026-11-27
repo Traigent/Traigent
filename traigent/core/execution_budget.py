@@ -25,7 +25,7 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   (± one trial in sequential mode) — not a per-trial-exact hard ceiling. Any overshoot
   is bounded to one batch's newly-admitted work and only arises when trials cost more
   than their pre-batch estimate.
-- **The monetary cap is a hard limit only when cost is fully observable.** On raw
+- **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
   cost, so a trial may debit ``$0`` it did not actually cost. When that happens the
   budget reports ``cost_tracking != "complete"`` and treats the consumed cost as a

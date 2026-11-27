@@ -3589,7 +3589,7 @@ def optimize(  # NOSONAR(S107)
                 instead of a single-call default. Defaults to 1.
             metric_limit: Soft cumulative stop for a named completed-trial metric.
                 Requires metric_name. Use for counters such as total tokens or
-                cumulative latency, not hard money-spend control.
+                cumulative latency, not spend control (use cost_limit for that).
             metric_name: Metric summed by metric_limit.
             semantic_saturation: Opt-in stop condition config matching
                 TraigentSchema

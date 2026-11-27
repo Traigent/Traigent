@@ -354,8 +354,9 @@ def respond_cmd(
     def confirm(facts: dict[str, Any]) -> bool:
         click.echo("Open breach, restore requested:")
         for key, value in facts.items():
-            click.echo(one_line(f"  {key}: {value}"))
-        return bool(click.confirm("Run optimize under this cost limit?", default=False))
+            label = "cost limit (USD)" if key == "cost_ceiling_usd" else key
+            click.echo(one_line(f"  {label}: {value}"))
+        return bool(click.confirm("Run optimize with this cost limit?", default=False))
 
     try:
         fn = _find_function(file_path, function)

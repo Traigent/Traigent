@@ -480,8 +480,9 @@ def unmeasured_cost_stop_message(
         "non-streaming litellm.completion/acompletion, or a raw "
         "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
         "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "
-        "docs/user-guide/cost_capture.md); a fully measured run is bounded by "
-        "cost_limit= / TRAIGENT_RUN_COST_LIMIT. TRAIGENT_FALLBACK_TRIAL_LIMIT "
+        "docs/user-guide/cost_capture.md); a fully measured run stops once its "
+        "measured spend reaches cost_limit= / TRAIGENT_RUN_COST_LIMIT (an admitted "
+        "trial can still overshoot). TRAIGENT_FALLBACK_TRIAL_LIMIT "
         "changes the default safety limit."
     )
 
@@ -844,8 +845,8 @@ class CostEnforcer:
     def waive_unknown_cost_trial_cap(self) -> None:
         """Let an explicitly sized run continue while its cost is unmeasured.
 
-        The measured part of the spend is still bounded by the cost limit;
-        unmeasured trials are bounded only by the run size the user set.
+        The run still stops once measured spend reaches the cost limit (an
+        admitted trial can overshoot it); unmeasured trials are bounded only by the run size the user set.
         """
         with self._lock:
             self._unknown_cost_cap_waived = True
