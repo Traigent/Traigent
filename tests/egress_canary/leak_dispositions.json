@@ -38,8 +38,8 @@
    "location": "body.key",
    "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
    "kind": "metric_name",
-   "reason": "Removed: summary_stats metadata is rebuilt from an allowlist that excludes aggregation_summary (commit b5f1a95fe).",
-   "reference": "traigent/utils/wire_text.py:190"
+   "reason": "Removed: the nested metadata.summary_stats copy is rebuilt from an allowlist that excludes aggregation_summary (commit 3c062e6f0).",
+   "reference": "traigent/utils/wire_text.py:232"
   },
   {
    "route": "POST /api/v1/sessions/{id}/results",
@@ -54,8 +54,8 @@
    "location": "body.value",
    "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.primary_objective",
    "kind": "metric_name",
-   "reason": "Removed: summary_stats metadata is rebuilt from an allowlist that excludes aggregation_summary (commit b5f1a95fe).",
-   "reference": "traigent/utils/wire_text.py:190"
+   "reason": "Removed: the nested metadata.summary_stats copy is rebuilt from an allowlist that excludes aggregation_summary (commit 3c062e6f0).",
+   "reference": "traigent/utils/wire_text.py:232"
   },
   {
    "route": "POST /api/v1/sessions/{id}/results",
