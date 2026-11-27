@@ -130,6 +130,14 @@ Works with any LLM provider — [OpenAI](https://platform.openai.com/docs), [Ant
 
 ---
 
+## Integrations
+
+Traigent ships integration modules for these providers and frameworks:
+
+[OpenAI](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/openai_plugin.py), [Azure OpenAI](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/azure_openai_plugin.py), [Anthropic](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/anthropic_plugin.py), [Gemini](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/gemini_plugin.py), [Mistral](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/mistral_plugin.py), [Cohere](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/cohere_plugin.py), [AWS Bedrock](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/bedrock_plugin.py), [Hugging Face](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/huggingface_plugin.py), [LiteLLM](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/litellm_plugin.py), [LangChain](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/langchain_plugin.py), [LlamaIndex](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/llms/llamaindex_plugin.py), [Pydantic AI](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/pydantic_ai/plugin.py), [DSPy](https://github.com/Traigent/Traigent/blob/main/traigent/integrations/dspy_adapter.py)
+
+---
+
 ## Choose Your Path
 
 | Goal | Resource | Time |
