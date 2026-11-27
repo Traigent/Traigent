@@ -531,19 +531,24 @@ _PRICING_URL_PROBE = (
 )
 
 
-def resolve_litellm_pricing_url(python: str | None = None) -> str:
+def resolve_litellm_pricing_url(
+    workload_env: dict[str, str], cwd: str, python: str | None = None
+) -> str:
     """litellm's own pricing URL, read from its runtime attribute.
 
-    Runs in a separate short child with the local-cost-map pin on and the URL
-    override unset, so the import fetches nothing. Fails closed: if the value
-    is missing or not an http(s) URL there is no default to fall back on.
+    Runs in a separate short child with exactly the workload child's
+    environment and cwd (so a ``.env`` or a workload variable resolves the
+    same way for both), changing only the local-cost-map pin (on, so the
+    import fetches nothing) and the URL override (removed). Fails closed: if
+    the value is missing or not an http(s) URL there is no default.
     """
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("LITELLM_")}
+    env = {k: v for k, v in workload_env.items() if k != _PRICING_ENV}
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
             [python or sys.executable, "-c", _PRICING_URL_PROBE],
             env=env,
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=120,
@@ -814,6 +819,8 @@ def child_env(
         env[_PRICING_ENV] = pricing_url
     # Loopback (the backend stub, the pricing listener) must bypass proxies.
     # Append to any existing value; keep both spellings identical.
+    if "*" in (env.get("NO_PROXY"), env.get("no_proxy")):
+        return env  # already bypasses everything; appending would break it
     entries: list[str] = []
     for name in ("NO_PROXY", "no_proxy"):
         for item in env.get(name, "").split(","):
@@ -852,9 +859,6 @@ def run_workload(
                 raise ValueError(
                     f"backend must be 'stub' or 'default', not {backend!r}"
                 )
-            default_pricing_url = (
-                resolve_litellm_pricing_url(python) if block_egress else None
-            )
             env = child_env(
                 backend_url=url if backend == "stub" else None,
                 pins=pins,
@@ -862,6 +866,11 @@ def run_workload(
                 pricing_url=pricing_url if block_egress else None,
             )
             env["HOME"] = home  # keep the real home out of reach and visible
+            default_pricing_url = (
+                resolve_litellm_pricing_url(env, workdir, python)
+                if block_egress
+                else None
+            )
             cmd = [python or sys.executable, _THIS_FILE, "_child", workload, out]
             if not block_egress:
                 cmd.append("--allow-egress")
