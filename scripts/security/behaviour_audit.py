@@ -635,7 +635,10 @@ def child_env(
             # CI=true (the workflow) makes the SDK refuse to optimise without
             # an explicit approval; without it the workload aborts before any
             # network code and the observed egress set is empty.
+            # The audit runs optimizations on purpose and approves only its
+            # own child processes; the workflow itself sets no approval.
             "TRAIGENT_RUN_APPROVED": "1",
+            "TRAIGENT_APPROVED_BY": "egress-audit (scripts/security/behaviour_audit.py)",
         }
     )
     if backend_url is not None:
