@@ -499,6 +499,31 @@ def _path_hint(path: Any) -> str:
     return "*." + ".".join(parts) if parts else "(no suffix)"
 
 
+def _litellm_load_record() -> dict[str, Any] | None:
+    """litellm's own record of its last pricing-map load, or None.
+
+    Second witness for the native fetch: litellm fetches its price table
+    through a Rust client that no Python-level hook (socket patches, httpx,
+    sys.audit events) can see, but it records the URL it attempted and why it
+    fell back. Only read when litellm is already imported, so reading never
+    triggers the fetch itself.
+    """
+    if "litellm" not in sys.modules:
+        return None
+    try:
+        from litellm.litellm_core_utils.get_model_cost_map import (
+            get_model_cost_map_source_info,
+        )
+
+        info = get_model_cost_map_source_info()
+        return {
+            k: info.get(k)
+            for k in ("source", "url", "is_env_forced", "fallback_reason")
+        }
+    except Exception as exc:  # noqa: BLE001 - witness is best-effort
+        return {"error": f"{type(exc).__name__}"}
+
+
 def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
     import importlib.util
 
@@ -534,6 +559,7 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
         payload["env_litellm_local_model_cost_map"] = os.environ.get(
             "LITELLM_LOCAL_MODEL_COST_MAP"
         )
+        payload["litellm_load_record"] = _litellm_load_record()
         tmp = out_path + ".partial"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2, default=str)
@@ -605,11 +631,71 @@ def stub_backend() -> Iterator[tuple[str, list[str]]]:
         server.server_close()
 
 
+#: The host litellm's native client fetches its price table from. The
+#: loopback listener below only stands in for it, so reports name this host.
+PRICING_HOST = "raw.githubusercontent.com"
+_PRICING_ENV = "LITELLM_MODEL_COST_MAP_URL"
+
+
+class _PricingListenerHandler(BaseHTTPRequestHandler):
+    """Answers 404 to every request and records the path only."""
+
+    paths: list[str] = []
+
+    def _answer(self) -> None:
+        self.paths.append(self.path.split("?", 1)[0])
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    do_GET = do_HEAD = do_POST = _answer
+
+    def log_message(self, *_args: Any) -> None:
+        return
+
+
+@contextmanager
+def pricing_listener() -> Iterator[tuple[str, list[str]]]:
+    """Loopback stand-in for litellm's pricing host.
+
+    litellm 1.111 fetches its price table at import through a native client
+    that Python-level detectors cannot see. Pointing LITELLM_MODEL_COST_MAP_URL
+    here turns a fetch attempt into an observed request, and nothing leaves
+    the machine.
+    """
+    log: list[str] = []
+    handler = type("Handler", (_PricingListenerHandler,), {"paths": log})
+    handler.timeout = 5  # type: ignore[attr-defined]
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/model_prices.json", log
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def native_fetch_observed(report: dict[str, Any]) -> list[str]:
+    """Witnesses that litellm attempted its pricing fetch in the child."""
+    witnesses: list[str] = []
+    if report.get("pricing_listener_requests"):
+        witnesses.append("listener")
+    rec = report.get("litellm_load_record") or {}
+    url = report.get("pricing_listener_url")
+    if url and rec.get("url") == url and not rec.get("is_env_forced"):
+        witnesses.append("litellm-load-record")
+    return witnesses
+
+
 def child_env(
     *,
     backend_url: str | None,
     pins: bool,
     extra: dict[str, str] | None,
+    pricing_url: str | None = None,
 ) -> dict[str, str]:
     """Environment for the workload child.
 
@@ -651,6 +737,11 @@ def child_env(
                 "TRAIGENT_ENVIRONMENT": "development",
             }
         )
+    if pricing_url is not None:
+        env[_PRICING_ENV] = pricing_url
+        # litellm's fetch honours proxies; keep the loopback listener direct.
+        for name in ("NO_PROXY", "no_proxy"):
+            env[name] = ",".join(filter(None, [env.get(name), "127.0.0.1"]))
     if pins:
         env.update(NETWORK_PINS)
     if extra:
@@ -673,7 +764,13 @@ def run_workload(
         out = os.path.join(workdir, "record.json")
         home = os.path.join(workdir, "home")
         os.makedirs(home)
-        with stub_backend() as (url, stub_log):
+        with (
+            stub_backend() as (url, stub_log),
+            pricing_listener() as (
+                pricing_url,
+                pricing_log,
+            ),
+        ):
             if backend not in ("stub", "default"):
                 raise ValueError(
                     f"backend must be 'stub' or 'default', not {backend!r}"
@@ -682,6 +779,7 @@ def run_workload(
                 backend_url=url if backend == "stub" else None,
                 pins=pins,
                 extra=extra_env,
+                pricing_url=pricing_url,
             )
             env["HOME"] = home  # keep the real home out of reach and visible
             cmd = [python or sys.executable, _THIS_FILE, "_child", workload, out]
@@ -699,6 +797,7 @@ def run_workload(
             )
             wall = round(time.monotonic() - started, 2)
             stub_requests = sorted(set(stub_log))
+            pricing_requests = sorted(set(pricing_log))
         if not os.path.exists(out):
             raise RuntimeError(
                 f"workload {workload!r} produced no record (rc={proc.returncode}); "
@@ -716,6 +815,8 @@ def run_workload(
             "returncode": proc.returncode,
             "wall_clock_s": wall,
             "stub_backend_requests": stub_requests,
+            "pricing_listener_url": pricing_url,
+            "pricing_listener_requests": pricing_requests,
             "stderr_tail": proc.stderr[-2000:],
             "python": sys.version.split()[0],
         }
@@ -732,7 +833,12 @@ def summarize(report: dict[str, Any]) -> dict[str, list[str]]:
         {d.rsplit(":", 1)[0] for d in by_cat.get("dns", [])}
         | {d.rsplit(":", 1)[0] for d in by_cat.get("connect", [])}
     )
+    witnesses = native_fetch_observed(report)
+    if witnesses and PRICING_HOST not in hosts:
+        # The listener only stands in for the real pricing host.
+        hosts = sorted([*hosts, PRICING_HOST])
     return {
+        "native_fetch_witnesses": witnesses,
         "hosts": hosts,
         "external_hosts": [h for h in hosts if not Recorder._is_loopback(h)],
         "processes": by_cat.get("process", []),

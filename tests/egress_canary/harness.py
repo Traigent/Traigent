@@ -805,6 +805,15 @@ class EgressCapture:
         )
 
     # -- sockets -----------------------------------------------------------
+    # litellm 1.111 fetches its price table through a native client that none of
+    # the patches below can see. That is acceptable here: under this harness
+    # LITELLM_LOCAL_MODEL_COST_MAP is already set (tests/conftest.py, and
+    # traigent/__init__.py unless TRAIGENT_LITELLM_LIVE_PRICES is set), so litellm
+    # never fetches. The pin is guarded by
+    # tests/unit/test_import_side_effects.py::test_import_traigent_pins_litellm_to_local_cost_map
+    # and the precondition is asserted by
+    # tests/egress_canary/test_litellm_native_fetch_precondition.py. The detector
+    # that does watch the native fetch is scripts/security/behaviour_audit.py.
     def _patch_socket(self, stack: Any) -> None:
         capture = self
 
