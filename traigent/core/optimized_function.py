@@ -230,7 +230,7 @@ _reject_removed_mock_parameters = reject_removed_mock_parameters
 _REMOVED_ALIAS_MESSAGES: dict[str, str] = {
     "budget_limit": (
         "budget_limit parameter was removed in 0.13.0. Use cost_limit=<USD> for "
-        "hard spend control, or metric_limit=<value> with metric_name=<name> "
+        "spend control, or metric_limit=<value> with metric_name=<name> "
         "instead."
     ),
     "budget_metric": (
