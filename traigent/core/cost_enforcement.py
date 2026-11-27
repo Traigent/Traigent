@@ -15,7 +15,8 @@ Adaptive Cost Estimation:
       override permit admission or enforce the run budget
 
 Environment Variables:
-    TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
+    TRAIGENT_RUN_COST_LIMIT: Planned max USD spend per run (default: 2.0);
+        actual spend can exceed it
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
@@ -229,7 +230,7 @@ class CostEnforcerConfig:
     """Configuration for cost enforcement.
 
     Attributes:
-        limit: Maximum USD spending per optimization run. Must be > 0;
+        limit: Planned maximum USD spend per run; actual spend can exceed it. Must be > 0;
             nonpositive limits raise ``ConfigurationError`` at construction
             time instead of silently blocking every trial.
         approved: Whether to skip the approval prompt.

@@ -3562,7 +3562,8 @@ def optimize(  # NOSONAR(S107)
                 for managed/cloud runs.
 
         Cost safeguards:
-            cost_limit: Maximum USD spending per optimization run. Defaults to
+            cost_limit: Planned maximum USD spend per optimization run (actual
+                spend can exceed it). Defaults to
                 TRAIGENT_RUN_COST_LIMIT env var or $2.00. It cannot bound
                 spend it cannot see: when a trial's cost cannot be measured
                 (no LLM usage captured) and the run was not sized explicitly,

@@ -323,7 +323,7 @@ def watch_cmd(
     "--max-fix-cost-usd",
     type=float,
     default=None,
-    help="Cost ceiling for the optimize run.",
+    help="Cost limit for the optimize run (actual spend can exceed it).",
 )
 @click.option(
     "--agent-ref",
@@ -355,9 +355,7 @@ def respond_cmd(
         click.echo("Open breach, restore requested:")
         for key, value in facts.items():
             click.echo(one_line(f"  {key}: {value}"))
-        return bool(
-            click.confirm("Run optimize under this cost ceiling?", default=False)
-        )
+        return bool(click.confirm("Run optimize under this cost limit?", default=False))
 
     try:
         fn = _find_function(file_path, function)
@@ -394,7 +392,7 @@ def respond_cmd(
             f"optimization started for breach {result.breach_id} "
             f"(occurrence {result.occurrence}); "
             f"run id: {result.run_id or 'unavailable'}; "
-            f"cost ceiling: {result.cost_ceiling_usd} USD"
+            f"cost limit: {result.cost_ceiling_usd} USD"
         )
     )
 
