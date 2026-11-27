@@ -13,7 +13,7 @@ aggregates each of the following metrics across examples:
 | Metrics | With strict nulls enabled |
 | --- | --- |
 | `input_tokens`, `output_tokens`, `total_tokens` | Each total is `None` if no example reports that count. |
-| `input_cost`, `output_cost`, `total_cost` | Each total is `None` if no example reports that amount. Explicit zero-cost evidence can produce a zero total. When the trial is flagged `cost_unmeasured`, all three are cleared even if some examples reported spend. When some examples report zero provider attempts and the rest report a `cost`, `total_cost` is the sum of those per-example costs, even if no example reported a `total_cost` key (one example with `cost` 0.25 and one failed example with zero attempts give 0.25). |
+| `input_cost`, `output_cost`, `total_cost` | Each total is `None` when the trial's cost is unknown, for example when a successful example reports zero provider attempts and no cost. Explicit zero-cost evidence can produce a zero total. When the trial is flagged `cost_unmeasured`, all three are cleared even if some examples reported spend. When some examples report zero provider attempts and the rest report a `cost`, `total_cost` is the sum of those per-example costs, even if no example reported a `total_cost` key (one example with `cost` 0.25 and one failed example with zero attempts give 0.25). |
 | Requested cost objectives (`cost`, `input_cost`, `output_cost`, `total_cost`) | Set to `None` when the trial is flagged `cost_unmeasured`. |
 
 With strict nulls off, the custom-evaluator aggregation omits these unknown

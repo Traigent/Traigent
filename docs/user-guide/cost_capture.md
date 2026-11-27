@@ -79,7 +79,7 @@ Use the model name Traigent prices as the key. For a custom evaluator, the SDK
 reads the model from the captured response. If the response omits the model,
 the SDK uses the trial's `model` setting.
 
-## Mock provenance in result metadata
+## Simulated model calls in results
 
 Optimization results can record whether model calls were simulated in `result.metadata`.
 

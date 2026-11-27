@@ -194,7 +194,8 @@ When the shared budget prevents the search loop from starting its next batch
 of trials, including when it blocks admission for incomplete cost tracking,
 the optimization records `result.stop_reason == "execution_budget"`. A direct
 local evaluation sets the same stop reason when a dimension it checks (time,
-examples or USD, reported as `exhausted_dimension`) is exhausted at entry or
+examples, USD, or incomplete cost tracking when `enforce_untracked_cost=True`,
+reported as `exhausted_dimension`) is exhausted at entry or
 after it records the evaluation's cost. The caller-reserved allowance
 (`max_budget_debit_usd`) is not one of those checks, so a budget funded only
 by that allowance can be used up while direct evaluation still runs; the
