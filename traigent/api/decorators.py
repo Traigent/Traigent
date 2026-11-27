@@ -3564,17 +3564,25 @@ def optimize(  # NOSONAR(S107)
         Cost safeguards:
             cost_limit: Planned maximum USD spend per optimization run (actual
                 spend can exceed it). Defaults to
-                TRAIGENT_RUN_COST_LIMIT env var or $2.00. It cannot bound
-                spend it cannot see: when a trial's cost cannot be measured
-                (no LLM usage captured) and the run was not sized explicitly,
-                the run stops at a default safety limit of 10 trials
-                (TRAIGENT_FALLBACK_TRIAL_LIMIT) with warning
-                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. Passing
-                ``max_trials`` explicitly (here or to ``.optimize()``) runs up
-                to that many trials instead, with warning
-                ``COST_UNMEASURED_TRIALS_RAN``; ``max_total_examples`` also
-                counts as consent but does not raise ``max_trials``.
-                ``max_trials=None`` does not count.
+                TRAIGENT_RUN_COST_LIMIT env var or $2.00. Passing
+                ``cost_approved=True`` without a Python ``cost_limit`` uses
+                $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
+                TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
+                cannot bound spend it cannot see. A trial's cost is
+                unmeasured when no LLM usage was captured or captured tokens
+                have no matching rate. With an explicit cost limit, a
+                non-failed trial with unmeasured cost raises
+                ``CostTrackingRequiredError``. With the inherited default
+                limit, the run continues and stops at a default safety limit
+                of 10 trials (TRAIGENT_FALLBACK_TRIAL_LIMIT) with
+                ``stop_reason == "cost_limit"`` and warning
+                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. For a local
+                optimization, passing ``max_trials`` explicitly (here or to
+                ``.optimize()``) waives that fallback and runs up to that many
+                trials, with warning ``COST_UNMEASURED_TRIALS_RAN``;
+                ``max_total_examples`` also counts as consent but does not
+                raise ``max_trials``. Managed optimization can still apply the
+                fallback with explicit sizing. ``max_trials=None`` does not count.
                 The limit is enforced between trials, not inside one: a
                 single expensive trial can overshoot it by roughly that
                 trial's cost (plus in-flight parallel trials) before the next

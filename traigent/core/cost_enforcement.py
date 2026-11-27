@@ -20,8 +20,9 @@ Environment Variables:
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
-    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
-        (default: false)
+    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs.
+        When unset, a ``cost`` objective enables it for that optimization;
+        otherwise it is off. Set it to ``false`` to opt out.
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning).
         This is a per-trial actual-vs-mean estimate check, not a budget guardrail.
@@ -475,8 +476,8 @@ def unmeasured_cost_stop_message(
         "(max_total_examples caps the total examples and also counts as your "
         "explicit consent, but does not raise max_trials, which defaults to "
         "10.) To get cost measured instead, "
-        f"{capture} -- synchronous LangChain ChatOpenAI/ChatAnthropic "
-        ".invoke (async .ainvoke/.abatch are not captured yet), "
+        f"{capture} -- LangChain ChatOpenAI/ChatAnthropic "
+        ".invoke/.ainvoke (.abatch is captured through .ainvoke), "
         "non-streaming litellm.completion/acompletion, or a raw "
         "openai.OpenAI/AsyncOpenAI client with enable_openai_optimization() "
         "or framework_targets=['openai.OpenAI', 'openai.AsyncOpenAI'] (see "

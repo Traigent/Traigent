@@ -4241,8 +4241,8 @@ class OptimizedFunction[**P, R]:
         writes ``result.metadata["execution_budget"]`` (consumed / remaining per
         dimension, ``untracked_trials``, ``cost_tracking``) and appends the
         ``"EXECUTION_BUDGET_UNTRACKED_COST"`` warning code when cost tracking is
-        incomplete — so a caller reading the monetary cap knows it was a lower
-        bound, not a hard guarantee. No-op when no budget was attached, keeping the
+        incomplete — so a caller reading the monetary cap knows the recorded
+        spend is a lower bound. No-op when no budget was attached, keeping the
         result shape byte-identical for the absent path.
         """
         budget: ExecutionBudget | None = getattr(orchestrator, "execution_budget", None)
@@ -4280,8 +4280,8 @@ class OptimizedFunction[**P, R]:
                 "ExecutionBudget: cost tracking was "
                 f"{snapshot.cost_tracking!r} ({snapshot.untracked_trials} of "
                 f"{snapshot.trials} trial(s) had unobservable cost). The consumed "
-                "cost is a LOWER BOUND and the monetary cap is not a hard "
-                "guarantee on this run; the examples and deadline caps stayed hard."
+                "cost is a lower bound, so the spend limit was checked against "
+                "less than the real spend."
             )
             if message not in result.warnings:
                 result.warnings.append(message)

@@ -5,8 +5,9 @@
 ``ExecutionBudget`` is an **experimental** primitive (issue #1980): a single cap on
 cost / examples / wall-clock time that can be shared across direct ``evaluate()``
 and ``optimize()`` calls (e.g. baseline -> search -> holdout phases), so the
-*total* spend across the whole workflow is bounded rather than each call being
-independently capped.
+*total* spend across the whole workflow is limited rather than each call being
+independently capped. The limit can be exceeded: a batch, concurrent runs, or one
+evaluation phase can spend past the remaining balance.
 
 Honesty contract (mirrors the SDK's cost-accounting discipline):
 
@@ -38,10 +39,12 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
   cost, so a trial may debit ``$0`` it did not actually cost. When that happens the
   budget reports ``cost_tracking != "complete"`` and treats the consumed cost as a
-  **lower bound** — it never claims a hard monetary guarantee it cannot honor.
-- **``enforce_untracked_cost=True`` fails closed mid-run only for trials that report
-  NO cost** (``cost is None`` — e.g. a raw-provider trial with no usage data): the
-  next admission after such a trial stops with ``stop_reason == "execution_budget"``.
+  **lower bound**, and the recorded spend is incomplete.
+- **``enforce_untracked_cost=True`` blocks the next batch once tracking is recorded
+  incomplete**, including trials that debit known spend but mark tracking incomplete.
+  The most common trigger is a trial that reports NO cost (``cost is None`` — e.g. a
+  raw-provider trial with no usage data): the next admission after such a trial stops
+  with ``stop_reason == "execution_budget"``.
   A model that is merely *unpriced* but reports a concrete ``$0`` is NOT caught
   mid-run (that debit is indistinguishable from a genuinely free ``$0`` trial); the
   silent-``$0`` path is reconciled at **finalization** — folded into
@@ -721,15 +724,15 @@ class ExecutionBudget:
         """Tri-state honesty flag for the monetary cap.
 
         ``"complete"`` when every trial's cost was observed; ``"partial"`` when some
-        were unobservable; ``"untracked"`` when none were. The cap is a hard
-        guarantee only when this is ``"complete"``.
+        were unobservable; ``"untracked"`` when none were. The recorded spend is
+        complete only when this is ``"complete"``; otherwise it is a lower bound.
         """
         with self._lock:
             return self._cost_tracking_locked()
 
     @property
     def was_any_cost_untracked(self) -> bool:
-        """True when the monetary cap is a lower bound, not a hard guarantee."""
+        """True when the recorded spend is a lower bound (tracking is incomplete)."""
         with self._lock:
             return self._cost_tracking_locked() != "complete"
 
@@ -775,7 +778,7 @@ class ExecutionBudget:
         caveat = (
             ""
             if tracking == "complete"
-            else " cost=LOWER_BOUND(not a hard guarantee: some cost was unobservable)"
+            else " cost=LOWER_BOUND(some cost was unobservable)"
         )
         return (
             "ExecutionBudget("

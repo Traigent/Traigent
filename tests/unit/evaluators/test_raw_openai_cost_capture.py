@@ -98,7 +98,7 @@ def _handler(*, usage: bool = True):
 
 def _sync_client(*, usage: bool = True) -> Any:
     return openai.OpenAI(
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
         base_url="https://gateway.invalid/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(_handler(usage=usage))),
         max_retries=0,
@@ -107,7 +107,7 @@ def _sync_client(*, usage: bool = True) -> Any:
 
 def _async_client(*, usage: bool = True) -> Any:
     return openai.AsyncOpenAI(
-        api_key="test-key",
+        api_key="test-key",  # pragma: allowlist secret
         base_url="https://gateway.invalid/v1",
         http_client=httpx.AsyncClient(
             transport=httpx.MockTransport(_handler(usage=usage))
@@ -734,7 +734,7 @@ def test_default_sized_unmeasured_run_stops_at_the_safety_limit(
         "more trials",
         "max_total_examples caps the total examples and also counts as your "
         "explicit consent, but does not raise max_trials",
-        "async .ainvoke/.abatch are not captured",
+        ".invoke/.ainvoke (.abatch is captured through .ainvoke)",
         "docs/user-guide/cost_capture.md",
         "enable_openai_optimization()",
         "TRAIGENT_FALLBACK_TRIAL_LIMIT",
