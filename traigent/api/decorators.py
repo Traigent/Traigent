@@ -3569,20 +3569,12 @@ def optimize(  # NOSONAR(S107)
                 ``cost_approved=True`` without a Python ``cost_limit`` uses
                 $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
                 TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
-                cannot bound spend it cannot see. A trial whose cost cannot
-                be fully measured is treated as unmeasured. With an explicit
-                cost limit, a completed (non-failed) such trial raises
-                ``CostTrackingRequiredError``. With the inherited default
-                limit, an unmeasured trial switches the run to a trial-count
-                limit (``stop_reason == "cost_limit"``, warning
-                ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``). For a local
-                optimization, passing ``max_trials`` explicitly (here or to
-                ``.optimize()``) waives that trial-count limit, with warning
-                ``COST_UNMEASURED_TRIALS_RAN``; in a local run
-                ``max_total_examples`` also counts as consent but does not
-                raise ``max_trials``. Managed optimization can still apply the
-                early stop. ``max_trials=None`` does not count. See
-                docs/user-guide/cost_capture.md.
+                cannot bound spend it cannot see. If a trial's cost cannot
+                be measured, the run may raise ``CostTrackingRequiredError`` or
+                stop early; see docs/user-guide/cost_capture.md for when each
+                applies. Explicit ``max_trials`` or ``max_total_examples`` can
+                change that early stop in a local run. ``max_trials=None`` does
+                not count.
                 The limit is enforced between trials, not inside one: a
                 single expensive trial can overshoot it by roughly that
                 trial's cost (plus in-flight parallel trials) before the next
