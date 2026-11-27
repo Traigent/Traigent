@@ -10,8 +10,10 @@ independently capped.
 
 Honesty contract (mirrors the SDK's cost-accounting discipline):
 
-- **Examples are a hard limit** — observable on every execution path, so exhaustion
-  is enforced deterministically.
+- **Examples are counted on every execution path**, so exhaustion is enforced
+  deterministically within one run. Across overlapping optimization calls the cap is
+  not guaranteed: each run takes its own sample pool from the shared remaining count
+  and debits afterwards.
 - **The wall-clock deadline is enforced at trial boundaries.** Between trials it is a
   hard stop; a single *hung* trial (a deadlocked sampler or stuck provider call) may
   overrun the deadline by the orchestrator's watchdog grace (25% of the remaining
@@ -24,7 +26,8 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   the remaining can fund in full), so the cap is a tight bound of **± one batch**
   (± one trial in sequential mode) — not a per-trial-exact hard ceiling. Any overshoot
   is bounded to one batch's newly-admitted work and only arises when trials cost more
-  than their pre-batch estimate.
+  than their pre-batch estimate. A first batch (before any measured cost exists) is
+  admitted on a default guess and can exceed the remaining budget.
 - **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
   cost, so a trial may debit ``$0`` it did not actually cost. When that happens the

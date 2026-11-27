@@ -571,7 +571,9 @@ class MetricLimitStopCondition(StopCondition):
     This is a soft, post-trial stop condition. It sums completed trial metrics and
     stops before the next trial once the configured metric has reached the limit.
     For spend control, use ``cost_limit`` and ``CostLimitStopCondition``; the
-    estimate is checked before each trial, so an admitted trial can still overshoot.
+    cost estimate is checked before each trial once one is available (the first
+    trial can start before a measured estimate exists), and an admitted trial can
+    still overshoot.
     """
 
     reason = "metric_limit"

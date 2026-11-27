@@ -1073,10 +1073,12 @@ class OptimizationResult:
               budget's stop condition and its pre-batch admission gate; the per-run
               cost enforcer's own cost_limit is left intact, so the pre-run approval
               gate estimates against the user's configured limit rather than the
-              budget's remaining cost. Examples are a hard limit; the deadline is
-              hard at trial boundaries (a single hung trial may overrun by the
-              watchdog grace); the monetary cap is a lower bound when cost is
-              unobservable — see metadata["execution_budget"]["cost_tracking"].
+              budget's remaining cost. Examples are counted on every path, but
+              overlapping optimization calls each take their own sample pool from
+              the shared remaining count and debit afterwards, so the examples
+              cap is not guaranteed across them; the deadline is hard at trial
+              boundaries (a single hung trial may overrun by the watchdog grace);
+              the recorded spend is a lower bound when cost is unobservable — see metadata["execution_budget"]["cost_tracking"].
             - "metric_limit": Hit a soft cumulative metric limit
             - "optimizer": Optimizer decided to stop (exhausted search space)
             - "plateau": Detected optimization plateau (no improvement)

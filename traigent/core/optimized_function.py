@@ -2540,9 +2540,11 @@ class OptimizedFunction[**P, R]:
                 (issue #1980). Pass the *same* instance to several ``optimize()``
                 calls (e.g. baseline -> search -> holdout) to cap the *total*
                 cost / examples / wall-clock across all of them; per-operation
-                limits still apply and can never exceed the shared cap. Examples
-                and the deadline are hard limits; the monetary cap is a lower bound
-                when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
+                limits still apply alongside the shared cap. A first batch of
+                spend can exceed the remaining budget, and the deadline allows
+                the watchdog grace for a hung trial. Examples are counted on every
+                path, but overlapping calls are not guaranteed to hold the cap.
+                The recorded spend is a lower bound when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
                 (default) leaves behavior unchanged.
             apply: ``True`` (default, the only supported value right now)
                 makes this an *advancing* run: when it finishes, its winner is
