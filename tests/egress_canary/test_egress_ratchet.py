@@ -22,6 +22,7 @@ from .pins import (
     load_dispositions,
     ratchet_problems,
     reference_problem,
+    register_additions,
 )
 from .scenario import ScenarioResult, run_scenario
 
@@ -151,7 +152,8 @@ def test_removed_leaks_need_a_disposition(scenario: ScenarioResult) -> None:
 
 
 def test_manifest_and_dispositions_are_consistent() -> None:
-    assert REGISTER <= BASELINE, "register may only shrink"
+    additions = register_additions(BASELINE, REGISTER)
+    assert not additions, f"register may only shrink: {_fmt(additions)}"
     dispositions = load_dispositions()
     disposed = set()
     for entry in dispositions:

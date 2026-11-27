@@ -4,8 +4,9 @@ leak_manifest.json pins leak *identities* (route, location, field_path,
 canary kind), not counts: a leak that moves to another field or location on
 the same route is a removal plus an addition and fails. Each removal needs
 an entry in leak_dispositions.json. A disposition with ``moved_to`` carries a
-known leak to a new route under the anchored ratchet. The leak remains
-registered as a known issue.
+known leak forward under the anchored ratchet. Declare the new route as a
+continuation of the same operation in ``ROUTE_MOVES`` in the same change and
+review it with the move. The carried identity remains a registered leak.
 """
 
 from __future__ import annotations
@@ -36,6 +37,22 @@ def load_dispositions() -> list[dict[str, str]]:
 
 
 BASELINE, REGISTER = load_manifest()
+
+#: Reviewed continuations of the same operation, from old route to new route.
+ROUTE_MOVES: dict[str, str] = {}
+
+
+def register_additions(
+    baseline: set[Identity], register: set[Identity]
+) -> set[Identity]:
+    """Return registered identities with no original or declared baseline identity."""
+    moved = {
+        (ROUTE_MOVES[route], location, field_path, kind)
+        for route, location, field_path, kind in baseline - register
+        if route in ROUTE_MOVES
+    }
+    return register - baseline - moved
+
 
 #: The 43 (route, kind) pairs measured before the coverage expansion (default
 #: config, identity fields, offline replay, failure paths). Kept so the report
@@ -245,6 +262,8 @@ def ratchet_problems(
             problems.append(f"unknown moved_to route for {source}: {route!r}")
         if isinstance(route, str) and anchor is not None and source in anchor:
             moves.append((source, (route, *source[1:]), entry))
+        elif isinstance(route, str) and ROUTE_MOVES.get(source[0]) != route:
+            problems.append(f"undeclared route move from {source[0]!r} to {route!r}")
 
     if anchor is None:  # first introduction: manifest must equal the live result
         if live != register:
@@ -274,6 +293,7 @@ def ratchet_problems(
                 and counts_do_not_grow
                 and source not in register
                 and target in register
+                and ROUTE_MOVES.get(source[0]) == target[0]
                 and target[0] in ROUTE_INVENTORY_IDS
                 and ROUTE_INVENTORY_IDS[target[0]] == ROUTE_INVENTORY_IDS.get(source[0])
                 and entry.get("reason", "").strip()
