@@ -81,7 +81,7 @@ the SDK uses the trial's `model` setting.
 
 ## Mock provenance in result metadata
 
-Optimization results can record mock provenance in `result.metadata`.
+Optimization results can record whether model calls were simulated in `result.metadata`.
 
 | Key | Meaning |
 |---|---|
@@ -89,11 +89,11 @@ Optimization results can record mock provenance in `result.metadata`.
 | `mock_llm_mixed` | When the SDK observes calls, `True` means it observed both simulated and real calls. |
 
 When the SDK observes no calls, it falls back to the mock settings it saw
-during trial dispatch or at run start.
+when each trial started or at run start.
 
 Read `result.metadata.get("mock_llm_run")` and treat `None` as "not recorded".
 The results table labels a recorded mock run. With mock mode active, it also
-labels results that lack mock provenance.
+labels results that lack that record.
 
 ## When nothing was captured
 
@@ -158,7 +158,7 @@ every configuration. You can also explicitly size a local optimization
 with `max_trials` or `max_total_examples` to waive the trial-count fallback.
 Passing the default trial count explicitly also qualifies. `max_total_examples`
 caps examples across all trials and leaves the ordinary `max_trials` default
-of 10 in place. Managed optimization can still apply the fallback with
+of 10 in place. Managed optimization (optimization where Traigent's service chooses which configurations to try) can still apply the fallback with
 explicit sizing.
 
 The per-run cost limit still applies to known spend. When a local result
