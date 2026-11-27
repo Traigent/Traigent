@@ -526,28 +526,36 @@ def _litellm_load_record() -> dict[str, Any] | None:
         return {"error": f"{type(exc).__name__}"}
 
 
-def _litellm_default_pricing_url() -> str | None:
-    """litellm's built-in pricing URL, read from its source without importing it.
+_PRICING_URL_PROBE = (
+    "import litellm; print(litellm.model_cost_map_url)"  # litellm's own runtime value
+)
 
-    Importing litellm would itself trigger the fetch this audit is watching,
-    so the default (the ``os.getenv("LITELLM_MODEL_COST_MAP_URL", <default>)``
-    argument in litellm/__init__.py) is read as text.
+
+def resolve_litellm_pricing_url(python: str | None = None) -> str:
+    """litellm's own pricing URL, read from its runtime attribute.
+
+    Runs in a separate short child with the local-cost-map pin on and the URL
+    override unset, so the import fetches nothing. Fails closed: if the value
+    is missing or not an http(s) URL there is no default to fall back on.
     """
-    import importlib.util
-    import re
-
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("LITELLM_")}
+    env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     try:
-        spec = importlib.util.find_spec("litellm")
-        if spec is None or not spec.origin:
-            return None
-        with open(spec.origin, encoding="utf-8") as fh:
-            text = fh.read()
-    except Exception:  # noqa: BLE001 - witness is best-effort
-        return None
-    match = re.search(
-        r"LITELLM_MODEL_COST_MAP_URL[\"']\s*,\s*[\"'](https?://[^\"']+)[\"']", text
-    )
-    return match.group(1) if match else None
+        proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
+            [python or sys.executable, "-c", _PRICING_URL_PROBE],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        value = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+    except (OSError, subprocess.SubprocessError):
+        value = ""
+    parts = urlsplit(value)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise RuntimeError("cannot determine litellm pricing URL")
+    return value
 
 
 def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
@@ -563,7 +571,6 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
         block_egress=block_egress, sdk_root=sdk_root, workload_file=workload_file
     )
     sys.addaudithook(recorder.hook)
-    default_pricing_url = _litellm_default_pricing_url()
 
     status: dict[str, Any] = {"exit": "ok", "error": None}
 
@@ -578,7 +585,6 @@ def _child_main(workload: str, out_path: str, block_egress: bool) -> int:
         payload["traigent_file"] = spec.origin
         payload["litellm_version"] = _dist_version("litellm")
         payload["workload_imported_litellm"] = workload_imported_litellm
-        payload["litellm_default_pricing_url"] = default_pricing_url
         # Direct evidence of whether the SDK's litellm-download pin landed in
         # this child's environment -- lets a test assert on the *cause*
         # (pin unset) rather than only the *effect* (a host got recorded),
@@ -740,7 +746,7 @@ def native_fetch_observed(report: dict[str, Any]) -> dict[str, Any]:
         if real:
             hosts.append(real)
         not_redirected = bool(listener_url)
-    if witnesses and not not_redirected:
+    if witnesses and not hosts:
         hosts.append(default_host or "litellm-default-pricing-host-unknown")
     return {
         "witnesses": witnesses,
@@ -801,19 +807,22 @@ def child_env(
     if extra:
         env.update(extra)
     if pricing_url is not None:
-        # Applied last so extra env cannot overwrite it.
+        if _PRICING_ENV in (extra or {}):
+            raise ValueError(
+                "unsupported: the workload sets LITELLM_MODEL_COST_MAP_URL"
+            )
         env[_PRICING_ENV] = pricing_url
-        # litellm's fetch honours proxies; keep the loopback listener direct.
-        # Append to any existing value; keep both spellings identical.
-        entries: list[str] = []
-        for name in ("NO_PROXY", "no_proxy"):
-            for item in env.get(name, "").split(","):
-                item = item.strip()
-                if item and item not in entries:
-                    entries.append(item)
-        if "127.0.0.1" not in entries:
-            entries.append("127.0.0.1")
-        env["NO_PROXY"] = env["no_proxy"] = ",".join(entries)
+    # Loopback (the backend stub, the pricing listener) must bypass proxies.
+    # Append to any existing value; keep both spellings identical.
+    entries: list[str] = []
+    for name in ("NO_PROXY", "no_proxy"):
+        for item in env.get(name, "").split(","):
+            item = item.strip()
+            if item and item not in entries:
+                entries.append(item)
+    if "127.0.0.1" not in entries:
+        entries.append("127.0.0.1")
+    env["NO_PROXY"] = env["no_proxy"] = ",".join(entries)
     return env
 
 
@@ -843,6 +852,9 @@ def run_workload(
                 raise ValueError(
                     f"backend must be 'stub' or 'default', not {backend!r}"
                 )
+            default_pricing_url = (
+                resolve_litellm_pricing_url(python) if block_egress else None
+            )
             env = child_env(
                 backend_url=url if backend == "stub" else None,
                 pins=pins,
@@ -883,7 +895,8 @@ def run_workload(
             "returncode": proc.returncode,
             "wall_clock_s": wall,
             "stub_backend_requests": stub_requests,
-            "pricing_listener_url": pricing_url,
+            "pricing_listener_url": pricing_url if block_egress else None,
+            "litellm_default_pricing_url": default_pricing_url,
             "pricing_listener_requests": pricing_requests,
             "stderr_tail": proc.stderr[-2000:],
             "python": sys.version.split()[0],
