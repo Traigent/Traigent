@@ -978,12 +978,6 @@
   {
    "route": "POST /api/v1/sessions/{id}/results",
    "location": "body.key",
-   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
-   "kind": "metric_name"
-  },
-  {
-   "route": "POST /api/v1/sessions/{id}/results",
-   "location": "body.key",
    "field_path": "$.metadata.summary_stats.metrics.cnryMetric_Gx9B_4aWz7Pl3",
    "kind": "metric_name"
   },
@@ -997,12 +991,6 @@
    "route": "POST /api/v1/sessions/{id}/results",
    "location": "body.key",
    "field_path": "$.metrics.cnryMetric_Gx9B_4aWz7Pl3",
-   "kind": "metric_name"
-  },
-  {
-   "route": "POST /api/v1/sessions/{id}/results",
-   "location": "body.key",
-   "field_path": "$.summary_stats.metadata.aggregation_summary.metrics.cnryMetric_Gx9B_4aWz7Pl3",
    "kind": "metric_name"
   },
   {
@@ -1044,20 +1032,8 @@
   {
    "route": "POST /api/v1/sessions/{id}/results",
    "location": "body.value",
-   "field_path": "$.error_message",
-   "kind": "exception_message"
-  },
-  {
-   "route": "POST /api/v1/sessions/{id}/results",
-   "location": "body.value",
    "field_path": "$.metadata.cnryMetaKey_Nb2J-7rKs5Yf4",
    "kind": "metadata_value"
-  },
-  {
-   "route": "POST /api/v1/sessions/{id}/results",
-   "location": "body.value",
-   "field_path": "$.metadata.summary_stats.metadata.aggregation_summary.primary_objective",
-   "kind": "metric_name"
   },
   {
    "route": "POST /api/v1/sessions/{id}/results",
@@ -1102,22 +1078,10 @@
    "kind": "prompt_template"
   },
   {
-   "route": "POST /api/v1/sessions/{id}/results",
-   "location": "body.value",
-   "field_path": "$.summary_stats.metadata.aggregation_summary.primary_objective",
-   "kind": "metric_name"
-  },
-  {
    "route": "PUT /api/v1/configuration-runs/{id}/measures",
    "location": "body.key",
    "field_path": "$.measures[0].cnryMetric_Gx9B_4aWz7Pl3",
    "kind": "metric_name"
-  },
-  {
-   "route": "PUT /api/v1/configuration-runs/{id}/status",
-   "location": "body.value",
-   "field_path": "$.error_message",
-   "kind": "exception_message"
   }
  ]
 }
