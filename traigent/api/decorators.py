@@ -3570,9 +3570,9 @@ def optimize(  # NOSONAR(S107)
                 $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
                 TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
                 cannot bound spend it cannot see. If a trial's cost cannot
-                be measured, the run may raise ``CostTrackingRequiredError`` or
-                stop early; see docs/user-guide/cost_capture.md for when each
-                applies. Explicit ``max_trials`` or ``max_total_examples`` can
+                be measured, the run may fail (``OptimizationError`` caused by
+                ``CostTrackingRequiredError``) or stop early; see
+                docs/user-guide/cost_capture.md for when each applies. Explicit ``max_trials`` or ``max_total_examples`` can
                 change that early stop in a local run. ``max_trials=None`` does
                 not count.
                 The limit is enforced between trials, not inside one: a
