@@ -27,9 +27,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 keywords = [
-    "llm", "optimization", "machine-learning", "ai", "hyperparameter-tuning",
-    "analytics", "meta-learning", "cost-optimization", "anomaly-detection",
-    "predictive-analytics", "enterprise", "bayesian-optimization"
+    "llm", "ai-agents", "agent-optimization", "llm-evaluation", "evals",
+    "model-selection", "prompt-optimization", "hyperparameter-tuning",
+    "cost-optimization", "llmops", "openai", "anthropic", "langchain",
+    "llamaindex", "litellm"
 ]
 
 # Core dependencies - minimal for basic functionality
@@ -310,7 +311,7 @@ enterprise = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Traigent/Traigent"
+Homepage = "https://traigent.ai"
 Documentation = "https://traigent.github.io/Traigent/"
 Repository = "https://github.com/Traigent/Traigent"
 "Bug Tracker" = "https://github.com/Traigent/Traigent/issues"
