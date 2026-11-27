@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -160,8 +161,18 @@ def test_plain_removal_on_the_wrong_route_is_rejected(monkeypatch):
         check_manifest(monkeypatch, {old, fixed}, {new}, dispositions)
 
 
-@pytest.mark.parametrize("declared", [True, False], ids=["declared", "undeclared"])
-def test_legacy_baseline_checks_the_route_move(monkeypatch, declared):
+@pytest.mark.parametrize(
+    ("declared", "changes"),
+    [
+        (True, {}),
+        (False, {}),
+        (True, {"location": "body.key"}),
+        (True, {"field_path": "$.other"}),
+        (True, {"kind": "function_name"}),
+    ],
+    ids=["declared", "undeclared", "location", "field_path", "kind"],
+)
+def test_legacy_baseline_checks_the_route_move(monkeypatch, declared, changes):
     agent = Leak(NEW, "body.value", "agent_name", "raw", "$.name")
     other_leaks = [
         Leak(OTHER, "body.value", "evaluation_set", "raw", "$.eval"),
@@ -181,10 +192,10 @@ def test_legacy_baseline_checks_the_route_move(monkeypatch, declared):
         unhandled_routes=[],
         optimization_error=None,
         result_source=None,
-        leaks=[agent, *other_leaks],
+        leaks=[replace(agent, **changes), *other_leaks],
     )
 
-    if declared:
+    if declared and not changes:
         test_egress_ratchet.test_legacy_default_run_leaks_stay_inside_the_baseline(
             scenario
         )
@@ -193,6 +204,37 @@ def test_legacy_baseline_checks_the_route_move(monkeypatch, declared):
             test_egress_ratchet.test_legacy_default_run_leaks_stay_inside_the_baseline(
                 scenario
             )
+
+
+@pytest.mark.parametrize("destination", [NEW, THIRD], ids=["direct", "transitive"])
+@pytest.mark.usefixtures("declared_move")
+def test_legacy_baseline_carries_an_identity_with_a_plain_removal(
+    monkeypatch, destination
+):
+    agent = Leak(OLD, "body.value", "agent_name", "raw", "$.name")
+    evaluator = Leak(OLD, "body.value", "evaluator_id", "raw", "$.evaluator_id")
+    evaluation_set = Leak(OTHER, "body.value", "evaluation_set", "raw", "$.eval")
+    dispositions = [entry(agent.identity, moved_to=NEW), entry(evaluator.identity)]
+    if destination == THIRD:
+        monkeypatch.setitem(pins.ROUTE_MOVES, NEW, THIRD)
+        dispositions.append(entry(replace(agent, route=NEW).identity, moved_to=THIRD))
+    baseline = {agent.identity, evaluator.identity, evaluation_set.identity}
+    register = {replace(agent, route=destination).identity, evaluation_set.identity}
+    check_manifest(monkeypatch, baseline, register, dispositions)
+
+    scenario = ScenarioResult(
+        requests=[],
+        guard_violations=[],
+        unhandled_routes=[],
+        optimization_error=None,
+        result_source=None,
+        leaks=[
+            replace(agent, route=destination),
+            replace(evaluator, route=destination),
+            evaluation_set,
+        ],
+    )
+    test_egress_ratchet.test_legacy_default_run_leaks_stay_inside_the_baseline(scenario)
 
 
 @pytest.mark.usefixtures("declared_move")
@@ -238,12 +280,15 @@ def test_route_move_cycle_raises(monkeypatch):
     monkeypatch.setattr(pins, "ROUTE_MOVES", {OLD: NEW, NEW: OLD})
     with pytest.raises(ValueError, match="cycle in ROUTE_MOVES"):
         pins.effective_baseline({at(OLD)}, [])
+    with pytest.raises(ValueError, match="cycle in ROUTE_MOVES"):
+        pins.route_level_baseline({at(OTHER)})
 
 
 def test_empty_route_moves_preserve_the_checked_in_baseline(monkeypatch):
     dispositions = [row for row in pins.load_dispositions() if "moved_to" not in row]
     monkeypatch.setattr(pins, "ROUTE_MOVES", {})
     assert pins.effective_baseline(pins.BASELINE, dispositions) == pins.BASELINE
+    assert pins.route_level_baseline(pins.BASELINE) == pins.BASELINE
 
 
 @pytest.mark.usefixtures("declared_move")

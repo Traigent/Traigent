@@ -24,6 +24,7 @@ from .pins import (
     load_dispositions,
     ratchet_problems,
     reference_problem,
+    route_level_baseline,
 )
 from .scenario import ScenarioResult, run_scenario
 
@@ -273,7 +274,7 @@ def test_legacy_default_run_leaks_stay_inside_the_baseline(
     """Opt-in off keeps the legacy request: its leaks are all known (baseline) identities."""
 
     assert legacy_scenario.optimization_error is None
-    baseline = effective_baseline(BASELINE, load_dispositions())
+    baseline = route_level_baseline(BASELINE)
     unknown = distinct_identities(legacy_scenario.leaks) - baseline
     assert not unknown, f"legacy shape grew leaks:\n{_fmt(unknown)}"
     # and it still carries the G1 fields the content-less path drops

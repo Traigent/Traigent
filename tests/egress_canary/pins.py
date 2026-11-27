@@ -43,10 +43,16 @@ ROUTE_MOVES: dict[str, str] = {}
 
 
 def effective_baseline(
-    baseline: set[Identity], dispositions: list[dict[str, str]]
+    baseline: set[Identity], dispositions: list[dict[str, str]] | None
 ) -> set[Identity]:
-    """Carry each baseline identity through its matching declared move dispositions."""
-    # Reject route cycles even when no disposition uses them.
+    """Carry identities through declared moves for the ratchet checks.
+
+    Manifest consistency supplies dispositions so each identity follows its own
+    register history. The legacy check uses ``None`` to follow route declarations
+    alone, since it compares against the historical baseline.
+    """
+    # Reject route cycles in either mode, including cycles unused by the baseline.
+    destinations: dict[str, str] = {}
     for source in ROUTE_MOVES:
         route = source
         visited: set[str] = set()
@@ -55,6 +61,13 @@ def effective_baseline(
                 raise ValueError(f"cycle in ROUTE_MOVES at {route!r}")
             visited.add(route)
             route = ROUTE_MOVES[route]
+        destinations[source] = route
+
+    if dispositions is None:
+        return {
+            (destinations.get(route, route), location, field_path, kind)
+            for route, location, field_path, kind in baseline
+        }
 
     moves: dict[Identity, str] = {}
     for entry in dispositions:
@@ -70,6 +83,15 @@ def effective_baseline(
             identity = (moves[identity], *identity[1:])
         effective.add(identity)
     return effective
+
+
+def route_level_baseline(baseline: set[Identity]) -> set[Identity]:
+    """Carry every historical identity to its route's final declared destination.
+
+    The legacy default run can still send fields removed from the content-less
+    register, so its check follows route declarations for those fields too.
+    """
+    return effective_baseline(baseline, dispositions=None)
 
 
 #: The 43 (route, kind) pairs measured before the coverage expansion (default
