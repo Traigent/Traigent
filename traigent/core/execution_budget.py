@@ -27,9 +27,11 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   holds to about **one batch** (one trial in sequential mode) — not a per-trial-exact
   hard ceiling. After the first measured costs, a batch is admitted only when its
   estimated cost fits the remaining budget, and overshoot comes from trials costing
-  more than estimated. The first batch, admitted before any cost is measured, skips
-  that affordability check and can exceed the remaining budget even when it costs less
-  than the default estimate. Overlapping optimization calls each read the shared
+  more than estimated. When the run has recorded no trials and the shared budget has
+  recorded no spend, the first batch skips that affordability check and can exceed the
+  remaining budget even when it costs less than the default estimate; once the shared
+  budget has recorded spend (for example, from an earlier run), a new run's first
+  batch is checked against a default estimate and can be refused. Overlapping optimization calls each read the shared
   remaining balance and debit after each trial, so together they can overshoot by
   more than one batch.
 - **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
