@@ -1900,9 +1900,13 @@ class AuthManager:
 
     @staticmethod
     def _backend_egress_reason(offline: bool) -> str:
-        if offline:
-            return "backend offline mode enabled"
-        return "backend egress disabled"
+        reason = (
+            "backend offline mode enabled" if offline else "backend egress disabled"
+        )
+        if _is_telemetry_key_validation():
+            # Withheld by egress policy during telemetry validation, not a rejected key.
+            return _WithheldKeyValidation(reason)
+        return reason
 
     def _key_validation_egress_reason(self) -> str | None:
         """Return the reason a backend key validation is blocked, if any."""
@@ -1911,12 +1915,11 @@ class AuthManager:
         if _is_telemetry_key_validation():
             if may_send_telemetry():
                 return None
-            reason = (
+            return (
                 self._backend_egress_reason(True)
                 if is_backend_offline()
-                else "telemetry disabled"
+                else _WithheldKeyValidation("telemetry disabled")
             )
-            return _WithheldKeyValidation(reason)
         return self._backend_egress_reason(True) if is_backend_offline() else None
 
     def _note_explicitly_unrestricted(self, data: Any) -> None:

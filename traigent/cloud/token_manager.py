@@ -420,12 +420,15 @@ class TokenManager:
         from traigent.cloud.auth import AuthResult, AuthStatus
         from traigent.cloud.client import cloud_backend_egress_disabled
 
-        if cloud_backend_egress_disabled(self.no_egress):
+        def egress_refusal() -> AuthResult:
             return AuthResult(
                 success=False,
                 status=AuthStatus.INVALID,
                 error_message=_GENERIC_REFRESH_ERROR,
             )
+
+        if cloud_backend_egress_disabled(self.no_egress):
+            return egress_refusal()
 
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not available for token refresh")
@@ -461,8 +464,10 @@ class TokenManager:
             jitter_factor=0.1,
         )
 
-        async def perform_refresh():
+        async def perform_refresh() -> dict[str, Any] | AuthResult:
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+                if cloud_backend_egress_disabled(self.no_egress):
+                    return egress_refusal()
                 async with session.post(
                     refresh_url,
                     json={"refresh_token": refresh_token_value},
@@ -481,7 +486,7 @@ class TokenManager:
             # Refresh is a non-idempotent POST with no Idempotency-Key (token
             # rotation): never replay it on an ambiguous failure (#1975).
             try:
-                token_data = await client.execute_with_retry(
+                attempt_result = await client.execute_with_retry(
                     single_shot_unkeyed_auth_call(
                         perform_refresh, passthrough=(RefreshRejectedError,)
                     ),
@@ -492,6 +497,10 @@ class TokenManager:
                 self._invalidate_refresh_state()
                 raise
 
+            if isinstance(attempt_result, AuthResult):
+                return attempt_result
+
+            token_data = attempt_result
             if not token_data:
                 return AuthResult(
                     success=False,

@@ -1555,6 +1555,9 @@ class BackendIntegratedClient:
             url = f"{backend_origin}/api/v1/auth/me/interaction-policy"
 
             async with gate_session(aiohttp.ClientSession(trust_env=True)) as session:
+                # Live recheck: egress may have been disabled since the entry check.
+                if cloud_backend_egress_disabled(self.no_egress):
+                    return self._static_interaction_policy()
                 async with session.get(
                     url,
                     headers=headers,
@@ -2718,6 +2721,7 @@ class BackendIntegratedClient:
 
         session = gate_session(requests.Session(), origins=[url], strict=True)
         try:
+            self._raise_if_backend_egress_disabled(operation)
             return session.request(
                 method,
                 url,
@@ -3027,8 +3031,8 @@ class BackendIntegratedClient:
         def _post_best_config() -> Any:
             try:
                 body_json = freeze_json_body(payload)
-                preflight_requests("POST", url, json=body_json)
                 self._raise_if_backend_egress_disabled("publish best config")
+                preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
                     url,
                     json=body_json,
@@ -3297,8 +3301,8 @@ class BackendIntegratedClient:
         # host and accept key material from it. A (connect, read) timeout pair
         # bounds a stalled Backend; the body is a few hundred bytes, so the
         # read limit effectively bounds the whole answer.
-        preflight_requests("POST", url)
         self._raise_if_backend_egress_disabled("fetch content-identity keys")
+        preflight_requests("POST", url)
         response = requests.post(  # nosec B113 - timeout is provided
             url,
             headers=headers,
@@ -3360,8 +3364,8 @@ class BackendIntegratedClient:
         code: str | None = None
         try:
             body = freeze_json_body(body)
-            preflight_requests(method, url, json=body)
             self._raise_if_backend_egress_disabled("call the process-record service")
+            preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
                 url,

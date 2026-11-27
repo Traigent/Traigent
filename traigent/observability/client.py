@@ -63,6 +63,7 @@ from traigent.observability.dtos import (
 )
 from traigent.security.redaction import redact_sensitive_data, redact_sensitive_text
 from traigent.utils import optimization_only_egress as oo_egress
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import (
     AuthenticationError,
     ClientError,
@@ -112,6 +113,14 @@ def _gate_opener(opener: Any) -> Any:
     from traigent.labels.transport_gate import gate_opener
 
     return gate_opener(opener)
+
+
+def _offline_request_error() -> ClientError:
+    """ClientError for a backend request skipped because offline mode is enabled."""
+    return ClientError(
+        "Observability backend request skipped because offline mode is "
+        f"enabled ({describe_offline_mode_cause()})"
+    )
 
 
 class _NoRedirectHandler(request.HTTPRedirectHandler):
@@ -3611,7 +3620,7 @@ class ObservabilityClient:
             start_time_from=start_time_from,
             start_time_to=start_time_to,
         )
-        payload = self._request_json("GET", f"/traces{query}")
+        payload = self._request_json("GET", f"/traces{query}", trace_read=True)
         return TraceListResponse.from_dict(self._unwrap_data(payload, "trace list"))
 
     def iter_traces(
@@ -3658,7 +3667,9 @@ class ObservabilityClient:
 
     def get_trace(self, trace_id: str) -> TraceRecord:
         payload = self._request_json(
-            "GET", f"/traces/{quote_path_segment(trace_id, field='trace_id')}"
+            "GET",
+            f"/traces/{quote_path_segment(trace_id, field='trace_id')}",
+            trace_read=True,
         )
         return TraceRecord.from_dict(self._unwrap_data(payload, "trace detail"))
 
@@ -3666,6 +3677,7 @@ class ObservabilityClient:
         payload = self._request_json(
             "GET",
             f"/traces/{quote_path_segment(trace_id, field='trace_id')}/observations",
+            trace_read=True,
         )
         return TraceObservationsResponse.from_dict(
             self._unwrap_data(payload, "trace observations")
@@ -3904,16 +3916,15 @@ class ObservabilityClient:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        *,
+        trace_read: bool = False,
     ) -> dict[str, Any]:
         with self._lock:
             if self._closed or self._close_pending:
                 raise ClientError("Observability client is closed")
         if self.config.offline_mode:
             self._log_offline_mode_once()
-            raise ClientError(
-                "Observability backend request skipped because offline mode is "
-                f"enabled ({describe_offline_mode_cause()})"
-            )
+            raise _offline_request_error()
         if self._request_sender_override is not None:
             return cast(
                 dict[str, Any], self._request_sender_override(method, path, payload)
@@ -3926,13 +3937,15 @@ class ObservabilityClient:
                 "Observability backend request skipped: no credential resolved "
                 "(set TRAIGENT_API_KEY or run `traigent auth login`)"
             )
-        return self._request_json_sync(method, path, payload)
+        return self._request_json_sync(method, path, payload, trace_read=trace_read)
 
     def _request_json_sync(
         self,
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
+        *,
+        trace_read: bool = False,
     ) -> dict[str, Any]:
         encoded_payload = None
         if payload is not None:
@@ -3944,6 +3957,10 @@ class ObservabilityClient:
             headers=self.config.build_headers(),
             method=method,
         )
+        if trace_read and is_backend_offline():
+            # Live recheck after request prep: offline mode may have flipped.
+            self._log_offline_mode_once()
+            raise _offline_request_error()
         try:
             with self._open_http_request(http_request) as response:
                 status_code = getattr(response, "status", 200)

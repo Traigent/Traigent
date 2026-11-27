@@ -30,6 +30,7 @@ from traigent.cloud import (
     backend_client,
     privacy_operations,
     session_operations,
+    token_manager,
     trial_operations,
 )
 from traigent.core import trace_export_gate
@@ -1474,7 +1475,7 @@ def test_best_config_rechecks_before_each_get(monkeypatch, flag, point):
 
 @pytest.mark.parametrize("flag", (None, OFFLINE))
 @pytest.mark.parametrize("operation", ("publish", "purpose-keys", "process-record"))
-def test_sync_backend_writes_recheck_after_preflight(monkeypatch, flag, operation):
+def test_sync_backend_writes_recheck_before_preflight(monkeypatch, flag, operation):
     from traigent.cloud.client import CloudEgressBlockedError
 
     client = backend_client.BackendIntegratedClient.__new__(
@@ -1485,21 +1486,20 @@ def test_sync_backend_writes_recheck_after_preflight(monkeypatch, flag, operatio
     client.project_id = "project"
     client.timeout = 1
     client.max_retries = 1
-    headers = Mock(return_value=dict(HEADERS))
+
+    def prepare_headers(**kwargs):
+        _flip(monkeypatch, flag)
+        return dict(HEADERS)
+
+    headers = Mock(side_effect=prepare_headers)
     client._get_sync_auth_headers = headers
     spec = {"config_id": "config"}
     response = SimpleNamespace(status_code=200, headers={}, json=lambda: {"data": spec})
     send = Mock(return_value=response)
     monkeypatch.setattr(requests, "post", send)
     monkeypatch.setattr(requests, "request", send)
-    preflight = backend_client.preflight_requests
-
-    def before_send(*args, **kwargs):
-        headers.assert_called_once_with(target="backend")
-        preflight(*args, **kwargs)
-        _flip(monkeypatch, flag)
-
-    monkeypatch.setattr(backend_client, "preflight_requests", before_send)
+    preflight = Mock(wraps=backend_client.preflight_requests)
+    monkeypatch.setattr(backend_client, "preflight_requests", preflight)
     calls = {
         "publish": (
             lambda: client.publish_best_config_sync(spec),
@@ -1522,6 +1522,8 @@ def test_sync_backend_writes_recheck_after_preflight(monkeypatch, flag, operatio
         with pytest.raises(CloudEgressBlockedError, match=offline_operation):
             call()
         send.assert_not_called()
+    headers.assert_called_once_with(target="backend")
+    assert preflight.call_count == int(flag is None)
 
 
 @pytest.mark.parametrize("flag", (None, OFFLINE))
@@ -1785,7 +1787,7 @@ def test_feature_upload_key_validation(monkeypatch, flag, in_loop):
 @pytest.mark.parametrize("flag", (OFFLINE, OPT_OUT))
 @pytest.mark.parametrize("aiohttp_available", (True, False), ids=("aiohttp", "sync"))
 async def test_ordinary_key_validation_semantics(monkeypatch, flag, aiohttp_available):
-    manager, post, _ = _api_key_manager(
+    manager, post, open_session = _api_key_manager(
         monkeypatch, flag, "validation", aiohttp_available=aiohttp_available
     )
     if flag == OPT_OUT:
@@ -1797,6 +1799,9 @@ async def test_ordinary_key_validation_semantics(monkeypatch, flag, aiohttp_avai
         with pytest.raises(auth.InvalidCredentialsError, match="offline mode"):
             await manager.get_headers()
         post.assert_not_called()
+        open_session.assert_not_called()
+        if not aiohttp_available:
+            asyncio.get_running_loop().run_in_executor.assert_not_called()
         assert manager._stats["failed_authentications"] == 1
 
 
@@ -1900,6 +1905,182 @@ def _legacy_client(**config):
     )
 
 
+def _session_that_flips(monkeypatch, flag, send):
+    class Session(_Session):
+        async def __aenter__(self):
+            _flip(monkeypatch, flag)
+            return self
+
+    return Session(send)
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+async def test_interaction_policy_rechecks_after_session_entry(monkeypatch, flag):
+    client = backend_client.BackendIntegratedClient.__new__(
+        backend_client.BackendIntegratedClient
+    )
+    client.no_egress = False
+    client.timeout = 10
+    client.backend_config = SimpleNamespace(backend_base_url=ORIGIN)
+    client._interaction_policy_cache = {}
+    client._interaction_policy_fallback_logged = True
+    static_policy = client._static_interaction_policy()
+    remote_policy = {**static_policy, "policy_text": "Backend policy"}
+    monkeypatch.setenv("TRAIGENT_API_KEY", HEADERS["X-API-Key"])
+    monkeypatch.setattr("traigent.utils.env_config.is_mock_llm", lambda: False)
+    send = Mock(return_value=_Response(200, remote_policy))
+    session = _session_that_flips(monkeypatch, flag, send)
+    monkeypatch.setattr(
+        backend_client.aiohttp, "ClientSession", Mock(return_value=session)
+    )
+    monkeypatch.setattr(backend_client, "gate_session", lambda session: session)
+
+    result = await client.get_interaction_policy()
+
+    assert send.call_count == int(flag != OFFLINE)
+    assert result == (static_policy if flag == OFFLINE else remote_policy)
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+def test_protected_request_rechecks_and_closes_prepared_session(monkeypatch, flag):
+    from traigent.cloud.client import CloudEgressBlockedError
+
+    client = backend_client.BackendIntegratedClient.__new__(
+        backend_client.BackendIntegratedClient
+    )
+    client.no_egress = False
+    client.timeout = 10
+    response = object()
+    session = SimpleNamespace(request=Mock(return_value=response), close=Mock())
+
+    def gate(*args, **kwargs):
+        _flip(monkeypatch, flag)
+        return session
+
+    monkeypatch.setattr(backend_client, "gate_session", gate)
+
+    def request():
+        return client._protected_request("GET", ORIGIN, operation="protected read")
+
+    if flag == OFFLINE:
+        with pytest.raises(CloudEgressBlockedError, match="protected read"):
+            request()
+        session.request.assert_not_called()
+    else:
+        assert request() is response
+        session.request.assert_called_once_with(
+            "GET", ORIGIN, allow_redirects=False, timeout=10
+        )
+    session.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+@pytest.mark.parametrize("point", ("url", "session", "retry"))
+async def test_jwt_refresh_rechecks_without_invalidating_credentials(
+    monkeypatch, flag, point
+):
+    from traigent.cloud.resilient_client import ResilientClient
+
+    manager = token_manager.TokenManager(
+        auth.UnifiedAuthConfig(backend_base_url=ORIGIN)
+    )
+    invalidate = Mock()
+    monkeypatch.setattr(manager, "_invalidate_refresh_state", invalidate)
+    success = auth.AuthResult(success=True, status=auth.AuthStatus.AUTHENTICATED)
+    commit = AsyncMock(return_value=success)
+    monkeypatch.setattr(manager, "_commit_refreshed_jwt", commit)
+    response = _Response(
+        200, {"success": True, "data": {"access_token": "placeholder"}}
+    )
+    rate_limited = _Response(429)
+    rate_limited.text = AsyncMock(return_value="rate limited")
+    send = Mock(
+        side_effect=([rate_limited, response] if point == "retry" else [response])
+    )
+    session = _session_that_flips(
+        monkeypatch, flag if point == "session" else None, send
+    )
+
+    async def validate(url, **kwargs):
+        if point == "url":
+            _flip(monkeypatch, flag)
+        return url
+
+    def delay(*args):
+        _flip(monkeypatch, flag)
+        return 0
+
+    monkeypatch.setattr(token_manager, "validate_cloud_base_url_async", validate)
+    monkeypatch.setattr(
+        token_manager.aiohttp, "ClientSession", Mock(return_value=session)
+    )
+    monkeypatch.setattr(token_manager, "gate_session", lambda session: session)
+    monkeypatch.setattr(ResilientClient, "calculate_delay", delay)
+
+    result = await manager.refresh_jwt_secure("placeholder-refresh")
+
+    invalidate.assert_not_called()
+    assert send.call_count == int(point == "retry") + int(flag != OFFLINE)
+    if flag == OFFLINE:
+        assert (result.success, result.status, result.error_message) == (
+            False,
+            auth.AuthStatus.INVALID,
+            "Token refresh failed",
+        )
+        commit.assert_not_awaited()
+    else:
+        assert result is success
+        commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+@pytest.mark.parametrize("operation", ("list", "detail", "observations"))
+def test_legacy_trace_reads_recheck_after_building_headers(
+    monkeypatch, flag, operation
+):
+    from traigent.utils.exceptions import ClientError
+
+    client = _legacy_client()
+    trace = {"id": "trace-1", "name": "trace"}
+    reads = {
+        "list": (client.list_traces, {"items": [trace]}),
+        "detail": (lambda: client.get_trace("trace-1"), trace),
+        "observations": (
+            lambda: client.get_trace_observations("trace-1"),
+            {"trace_id": "trace-1"},
+        ),
+    }
+    read, payload = reads[operation]
+    open_request = Mock(return_value=BytesIO(json.dumps({"data": payload}).encode()))
+    monkeypatch.setattr(client, "_open_http_request", open_request)
+    build_headers = ObservabilityConfig.build_headers
+
+    def prepare_headers(config):
+        headers = build_headers(config)
+        _flip(monkeypatch, flag)
+        return headers
+
+    monkeypatch.setattr(ObservabilityConfig, "build_headers", prepare_headers)
+    try:
+        if flag == OFFLINE:
+            with pytest.raises(
+                ClientError, match="backend request skipped because offline mode"
+            ):
+                read()
+            open_request.assert_not_called()
+        else:
+            result = read()
+            trace_id = {
+                "list": lambda result: result.items[0].id,
+                "detail": lambda result: result.id,
+                "observations": lambda result: result.trace_id,
+            }[operation](result)
+            assert trace_id == "trace-1"
+            open_request.assert_called_once()
+    finally:
+        client.close()
+
+
 @pytest.mark.parametrize(
     ("flag", "point"),
     (
@@ -1982,22 +2163,59 @@ def test_legacy_batch_refused_by_validation(monkeypatch, flag):
         client.close()
 
 
-@pytest.mark.parametrize("flag", (OPT_OUT, OFFLINE))
-def test_legacy_flush_preserves_validation_suppression(monkeypatch, flag):
+@pytest.mark.parametrize(
+    ("point", "flag"),
+    (
+        ("url", OPT_OUT),
+        ("url", OFFLINE),
+        ("async-entry", OFFLINE),
+        ("sync-entry", OFFLINE),
+    ),
+)
+def test_legacy_flush_preserves_validation_suppression(monkeypatch, point, flag):
     async def validate(url, **kwargs):
-        _flip(monkeypatch, flag)
+        if point == "url":
+            _flip(monkeypatch, flag)
         return url
+
+    flip_on_policy_check = point == "async-entry"
+    may_send = auth.may_send_telemetry
+    sync_validate = auth.AuthManager._validate_api_key_with_backend_sync
+
+    def policy_check():
+        nonlocal flip_on_policy_check
+        permitted = may_send()
+        if flip_on_policy_check:
+            flip_on_policy_check = False
+            _flip(monkeypatch, flag)
+        return permitted
+
+    def enter_sync_validator(*args, **kwargs):
+        nonlocal flip_on_policy_check
+        flip_on_policy_check = True
+        return sync_validate(*args, **kwargs)
+
+    monkeypatch.setattr(auth, "may_send_telemetry", policy_check)
+    if point == "sync-entry":
+        monkeypatch.setattr(auth, "AIOHTTP_AVAILABLE", False)
+        monkeypatch.setattr(
+            auth.AuthManager,
+            "_validate_api_key_with_backend_sync",
+            enter_sync_validator,
+        )
 
     gate = optimization_only_egress
     wait_for_validation = gate._await_trace_validation
+    statuses = []
 
     def clear_after_validation(entry):
         status = wait_for_validation(entry)
-        assert status == "withheld"
+        statuses.append(status)
         monkeypatch.delenv(flag)
         return status
 
     validation_post = Mock()
+    monkeypatch.setattr(requests, "post", validation_post)
     monkeypatch.setattr(gate, "is_traigent_trace_endpoint", lambda _: True)
     monkeypatch.setattr(gate, "_await_trace_validation", clear_after_validation)
     monkeypatch.setattr(auth, "validate_cloud_base_url_async", validate)
@@ -2014,7 +2232,9 @@ def test_legacy_flush_preserves_validation_suppression(monkeypatch, flag):
         result = client.flush()
         validation_post.assert_not_called()
         trace_post.assert_not_called()
+        assert not flip_on_policy_check
         assert (result.items_sent, result.items_suppressed) == (0, 1)
+        assert statuses == ["withheld"]
     finally:
         client.close()
         gate.reset_trace_gate()
@@ -2195,6 +2415,7 @@ class _HttpHandoffs(ast.NodeVisitor):
         self.calls = Counter()
         self.functions = []
         self.aliases = http_egress_scan._aliases(tree)
+        self.assigned_aliases = [{}]
         self.session_receivers = [set()]
 
     def visit_ClassDef(self, node):
@@ -2216,13 +2437,17 @@ class _HttpHandoffs(ast.NodeVisitor):
                     if name.startswith("self.")
                 )
         self.session_receivers.append(members)
+        self.assigned_aliases.append({})
         self.generic_visit(node)
+        self.assigned_aliases.pop()
         self.session_receivers.pop()
 
     def visit_FunctionDef(self, node):
         self.functions.append(node.name)
         self.session_receivers.append(set())
+        self.assigned_aliases.append({})
         self.generic_visit(node)
+        self.assigned_aliases.pop()
         self.session_receivers.pop()
         self.functions.pop()
 
@@ -2231,7 +2456,10 @@ class _HttpHandoffs(ast.NodeVisitor):
     def _resolve(self, node):
         dotted = http_egress_scan._dotted(node)
         head, _, tail = dotted.partition(".")
-        target = self.aliases.get(head, head)
+        target = next(
+            (scope[head] for scope in reversed(self.assigned_aliases) if head in scope),
+            self.aliases.get(head, head),
+        )
         return f"{target}.{tail}" if tail else target
 
     def _is_session_instance(self, value):
@@ -2253,11 +2481,34 @@ class _HttpHandoffs(ast.NodeVisitor):
     def _track_session(self, value, targets):
         self.session_receivers[-1].update(self._session_targets(value, targets))
 
+    def _track_callable_aliases(self, value, targets):
+        resolved = self._resolve(value)
+        receiver, _, method = resolved.rpartition(".")
+        transport = receiver.split(".")[0] in {"aiohttp", "httpx", "requests", "urllib"}
+        session = any(receiver in scope for scope in self.session_receivers)
+        http_callable = (
+            method in self._methods
+            and (transport or session)
+            or method == "urlopen"
+            and transport
+            or method == "open"
+            and session
+        )
+        aliases = self.assigned_aliases[-1]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                if http_callable:
+                    aliases[target.id] = resolved
+                else:
+                    aliases.pop(target.id, None)
+
     def visit_Assign(self, node):
+        self._track_callable_aliases(node.value, node.targets)
         self._track_session(node.value, node.targets)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node):
+        self._track_callable_aliases(node.value, (node.target,))
         self._track_session(node.value, (node.target,))
         self.generic_visit(node)
 
@@ -2339,6 +2590,21 @@ def _http_handoffs(root):
             "    conn.get('https://example.com')",
             "fetch/get",
         ),
+        (
+            "import requests\nget = requests.get\nget('https://example.com')",
+            "<module>/get",
+        ),
+        (
+            "import httpx as http\n"
+            "def fetch():\n    download: object = http.get\n    send = download\n"
+            "    send('https://example.com')",
+            "fetch/get",
+        ),
+        (
+            "import requests\nconn = requests.Session()\n"
+            "download = conn.get\ndownload('https://example.com')",
+            "<module>/get",
+        ),
     ),
     ids=(
         "variable",
@@ -2348,9 +2614,12 @@ def _http_handoffs(root):
         "inline-alias",
         "wrapped",
         "nested-wrapper",
+        "callable-alias",
+        "annotated-chain",
+        "bound-method-alias",
     ),
 )
-def test_http_inventory_recognizes_session_instance(tmp_path, source, call):
+def test_http_inventory_recognizes_http_calls(tmp_path, source, call):
     (tmp_path / "probe.py").write_text(source, encoding="utf-8")
     assert dict(_http_handoffs(tmp_path)) == {"probe.py": Counter({call: 1})}
 
