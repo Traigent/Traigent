@@ -123,6 +123,74 @@ def test_register_route_rekey_against_baseline(monkeypatch, declare, changes, ex
             test_egress_ratchet.test_manifest_and_dispositions_are_consistent()
 
 
+def check_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    baseline: set[Identity],
+    register: set[Identity],
+    dispositions: list[dict[str, str]],
+) -> None:
+    monkeypatch.setattr(test_egress_ratchet, "BASELINE", baseline)
+    monkeypatch.setattr(test_egress_ratchet, "REGISTER", register)
+    monkeypatch.setattr(test_egress_ratchet, "load_dispositions", lambda: dispositions)
+    test_egress_ratchet.test_manifest_and_dispositions_are_consistent()
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_later_removal_from_the_moved_route_passes(monkeypatch):
+    old, new = at(OLD), at(NEW)
+    history = [entry(old, moved_to=NEW)]
+    check_manifest(monkeypatch, {old}, {new}, history)
+
+    dispositions = [*history, entry(new)]
+    assert problems(set(), {new}, set(), dispositions) == []
+    check_manifest(monkeypatch, {old}, set(), dispositions)
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_later_declared_move_from_the_moved_route_passes(monkeypatch):
+    old, new, third = at(OLD), at(NEW), at(THIRD)
+    history = [entry(old, moved_to=NEW)]
+    check_manifest(monkeypatch, {old}, {new}, history)
+
+    monkeypatch.setitem(pins.ROUTE_MOVES, NEW, THIRD)
+    dispositions = [*history, entry(new, moved_to=THIRD)]
+    assert problems({third}, {new}, {third}, dispositions) == []
+    check_manifest(monkeypatch, {old}, {third}, dispositions)
+
+
+def test_route_move_cycle_raises(monkeypatch):
+    monkeypatch.setattr(pins, "ROUTE_MOVES", {OLD: NEW, NEW: OLD})
+    with pytest.raises(ValueError, match="cycle in ROUTE_MOVES"):
+        pins.register_additions({at(OLD)}, {at(OLD)})
+
+
+def test_empty_route_moves_preserve_the_checked_in_baseline(monkeypatch):
+    monkeypatch.setattr(pins, "ROUTE_MOVES", {})
+    assert pins.effective_baseline(pins.BASELINE) == pins.BASELINE
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_stale_plain_disposition_is_rejected(monkeypatch):
+    old, new = at(OLD), at(NEW)
+    dispositions = [entry(old, moved_to=NEW), entry(at(OTHER))]
+    with pytest.raises(AssertionError, match=r"stale: .*POST /r/other"):
+        check_manifest(monkeypatch, {old}, {new}, dispositions)
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_manifest_still_requires_the_move_disposition(monkeypatch):
+    with pytest.raises(AssertionError, match=r"missing: .*POST /r/old"):
+        check_manifest(monkeypatch, {at(OLD)}, {at(NEW)}, [])
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_move_history_cannot_start_outside_the_baseline(monkeypatch):
+    monkeypatch.setitem(pins.ROUTE_MOVES, OTHER, OLD)
+    dispositions = [entry(at(OTHER), moved_to=OLD), entry(at(OLD), moved_to=NEW)]
+    with pytest.raises(AssertionError, match=r"stale: .*POST /r/other"):
+        check_manifest(monkeypatch, {at(OLD)}, {at(NEW)}, dispositions)
+
+
 def test_plain_removal_still_passes():
     old = at(OLD)
     assert problems(set(), {old}, set(), [entry(old)]) == []

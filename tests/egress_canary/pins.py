@@ -3,10 +3,10 @@
 leak_manifest.json pins leak *identities* (route, location, field_path,
 canary kind), not counts: a leak that moves to another field or location on
 the same route is a removal plus an addition and fails. Each removal needs
-an entry in leak_dispositions.json. A disposition with ``moved_to`` carries a
-known leak forward under the anchored ratchet. Declare the new route as a
-continuation of the same operation in ``ROUTE_MOVES`` in the same change and
-review it with the move. The carried identity remains a registered leak.
+an entry in leak_dispositions.json. Each ``ROUTE_MOVES`` entry is a reviewed
+assertion that both routes serve the same operation. Add it in the same
+change as the ``moved_to`` disposition. The disposition carries the identity
+forward as a registered leak and grants no approval.
 """
 
 from __future__ import annotations
@@ -42,16 +42,29 @@ BASELINE, REGISTER = load_manifest()
 ROUTE_MOVES: dict[str, str] = {}
 
 
+def effective_baseline(baseline: set[Identity]) -> set[Identity]:
+    """Carry baseline identities to the last route in each declared move chain."""
+    destinations: dict[str, str] = {}
+    for source in ROUTE_MOVES:
+        route = source
+        visited: set[str] = set()
+        while route in ROUTE_MOVES:
+            if route in visited:
+                raise ValueError(f"cycle in ROUTE_MOVES at {route!r}")
+            visited.add(route)
+            route = ROUTE_MOVES[route]
+        destinations[source] = route
+    return {
+        (destinations.get(route, route), location, field_path, kind)
+        for route, location, field_path, kind in baseline
+    }
+
+
 def register_additions(
     baseline: set[Identity], register: set[Identity]
 ) -> set[Identity]:
-    """Return registered identities with no original or declared baseline identity."""
-    moved = {
-        (ROUTE_MOVES[route], location, field_path, kind)
-        for route, location, field_path, kind in baseline - register
-        if route in ROUTE_MOVES
-    }
-    return register - baseline - moved
+    """Return registered identities outside the effective baseline."""
+    return register - effective_baseline(baseline)
 
 
 #: The 43 (route, kind) pairs measured before the coverage expansion (default

@@ -13,11 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from . import pins
 from .canaries import distinct_identities, distinct_pairs
 from .pins import (
     BASELINE,
     PRE_EXPANSION_PAIRS,
     REGISTER,
+    effective_baseline,
     load_anchor,
     load_dispositions,
     ratchet_problems,
@@ -154,20 +156,44 @@ def test_removed_leaks_need_a_disposition(scenario: ScenarioResult) -> None:
 def test_manifest_and_dispositions_are_consistent() -> None:
     additions = register_additions(BASELINE, REGISTER)
     assert not additions, f"register may only shrink: {_fmt(additions)}"
+    baseline = effective_baseline(BASELINE)
     dispositions = load_dispositions()
     disposed = set()
+    move_sources = set()
+    move_targets = set()
     for entry in dispositions:
         assert entry.get("reason", "").strip(), f"disposition without reason: {entry}"
         assert entry.get("reference", "").strip(), (
             f"disposition without reference: {entry}"
         )
-        disposed.add(
-            (entry["route"], entry["location"], entry["field_path"], entry["kind"])
+        identity = (
+            entry["route"],
+            entry["location"],
+            entry["field_path"],
+            entry["kind"],
         )
-    assert disposed == BASELINE - REGISTER, (
+        if "moved_to" in entry:
+            destination = entry["moved_to"]
+            assert pins.ROUTE_MOVES.get(identity[0]) == destination, (
+                f"undeclared move disposition: {entry}"
+            )
+            move_sources.add(identity)
+            move_targets.add((destination, *identity[1:]))
+        else:
+            disposed.add(identity)
+    # A chain starts at a historical identity. Each intermediate target needs
+    # its own move disposition, and endpoints are checked against the register.
+    carried = (BASELINE | move_targets) - baseline
+    assert move_sources == carried, (
+        "move dispositions must cover each declared step from the baseline; "
+        f"missing: {sorted(carried - move_sources)}, "
+        f"stale: {sorted(move_sources - carried)}"
+    )
+    removed = baseline - REGISTER
+    assert disposed == removed, (
         "every identity removed from the register needs exactly one disposition; "
-        f"missing: {sorted((BASELINE - REGISTER) - disposed)}, "
-        f"stale: {sorted(disposed - (BASELINE - REGISTER))}"
+        f"missing: {sorted(removed - disposed)}, "
+        f"stale: {sorted(disposed - removed)}"
     )
 
 
