@@ -1367,7 +1367,9 @@ class TestSubmitDoesNotStallEventLoop:
                 pass
             return time.monotonic() - start
 
-        with patch("traigent.utils.local_analytics.may_send_telemetry", return_value=True):
+        with patch(
+            "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+        ):
             with patch(
                 "traigent.utils.local_analytics.usage_analytics_allowed",
                 return_value=True,
@@ -1384,18 +1386,21 @@ class TestSubmitDoesNotStallEventLoop:
         monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
         monkeypatch.delenv("OPTIGEN_API_KEY", raising=False)
         analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
-        with patch("traigent.utils.local_analytics.may_send_telemetry", return_value=True):
-            with patch(
-                "traigent.utils.local_analytics.usage_analytics_allowed",
-                return_value=True,
-            ), patch(
-                "traigent.config.backend_config.BackendConfig.get_api_key",
-                return_value=None,
-            ), patch.object(
-                analytics.storage, "list_sessions"
-            ) as listed, patch.object(
-                analytics.storage, "load_session"
-            ) as loaded:
+        with patch(
+            "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+        ):
+            with (
+                patch(
+                    "traigent.utils.local_analytics.usage_analytics_allowed",
+                    return_value=True,
+                ),
+                patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value=None,
+                ),
+                patch.object(analytics.storage, "list_sessions") as listed,
+                patch.object(analytics.storage, "load_session") as loaded,
+            ):
                 result = asyncio.run(analytics.submit_usage_stats())
         assert result["success"] is False
         listed.assert_not_called()
