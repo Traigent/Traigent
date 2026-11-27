@@ -9,6 +9,7 @@ All data sent is privacy-safe and contains no sensitive information.
 
 import asyncio
 import logging
+import time
 import uuid
 import warnings
 from datetime import UTC, datetime, timedelta
@@ -42,6 +43,12 @@ except ModuleNotFoundError:
 # to avoid process-wide suppression that could hide real leaks elsewhere.
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock cap for the session scan done on the submit path. The scan runs in
+# a worker thread so the orchestrator's wait_for can fire, and this budget makes
+# the thread itself stop shortly after instead of reading every session file.
+_SUBMIT_SCAN_BUDGET_SECONDS = 3.0
+_FIRST_USE_FILENAME = ".first_use"
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
@@ -183,8 +190,35 @@ class LocalAnalytics:
 
         return user_id
 
-    def collect_usage_stats(self) -> dict[str, Any]:
+    def _load_sessions(self, time_budget: float | None) -> tuple[list[Any], int | None]:
+        """Load sessions; with a budget, stop reading once it is spent.
+
+        Returns ``(sessions, total_files)``. ``total_files`` is the number of
+        session files on disk when the scan was cut short, else ``None``.
+        """
+        if time_budget is None:
+            return self.storage.list_sessions(), None
+        deadline = time.monotonic() + time_budget
+        sessions_dir = Path(self.storage.storage_path) / "sessions"
+        if not sessions_dir.exists():
+            return [], None
+        names = [f.stem for f in sessions_dir.glob("*.json")]
+        sessions: list[Any] = []
+        for name in names:
+            if time.monotonic() > deadline:
+                return sessions, len(names)
+            session = self.storage.load_session(name)
+            if session:
+                sessions.append(session)
+        return sessions, None
+
+    def collect_usage_stats(self, time_budget: float | None = None) -> dict[str, Any]:
         """Collect privacy-safe aggregated usage statistics.
+
+        Args:
+            time_budget: Optional cap in seconds on reading session files. When
+                the cap is hit the aggregates cover the sessions read so far and
+                ``total_sessions`` is the file count on disk.
 
         Returns:
             Dictionary containing aggregated, non-sensitive stats
@@ -193,7 +227,7 @@ class LocalAnalytics:
             return {}
 
         try:
-            sessions = self.storage.list_sessions()
+            sessions, truncated_total = self._load_sessions(time_budget)
             completed_sessions = [
                 s for s in sessions if s.status == OptimizationStatus.COMPLETED.value
             ]
@@ -236,7 +270,9 @@ class LocalAnalytics:
 
             return {
                 # Basic usage metrics
-                "total_sessions": len(sessions),
+                "total_sessions": (
+                    truncated_total if truncated_total is not None else len(sessions)
+                ),
                 "completed_sessions": len(completed_sessions),
                 "failed_sessions": len(failed_sessions),
                 "total_trials": total_trials,
@@ -252,7 +288,10 @@ class LocalAnalytics:
                 ),
                 # Time-based metrics
                 "sessions_last_30_days": len(recent_sessions),
-                "days_since_first_use": self._get_days_since_first_use(),
+                "days_since_first_use": self._get_days_since_first_use(
+                    sessions if time_budget is not None else None,
+                    persist=truncated_total is None,
+                ),
                 # Version and environment (non-sensitive)
                 "sdk_version": get_version(),
                 "execution_mode": self.config.execution_mode,
@@ -270,18 +309,45 @@ class LocalAnalytics:
             logger.debug(f"Error collecting usage stats: {e}")
             return {}
 
-    def _get_days_since_first_use(self) -> int:
-        """Calculate days since first optimization session."""
+    def _first_use_file(self) -> Path:
+        return Path(self.storage.storage_path) / _FIRST_USE_FILENAME
+
+    def _get_days_since_first_use(
+        self, loaded_sessions: list[Any] | None = None, persist: bool = True
+    ) -> int:
+        """Calculate days since first optimization session.
+
+        Reads a stored first-use timestamp (next to ``.analytics_id``). Only when
+        it is missing is it derived once, from ``loaded_sessions`` if given or
+        else a full scan, and then stored so later calls never scan.
+        """
         try:
-            sessions = self.storage.list_sessions()
+            first_use_file = self._first_use_file()
+            try:
+                first_use = datetime.fromisoformat(first_use_file.read_text().strip())
+                if first_use.tzinfo is None:
+                    first_use = first_use.replace(tzinfo=UTC)
+                return max((datetime.now(UTC) - first_use).days, 0)
+            except (OSError, ValueError):
+                pass
+
+            sessions = (
+                loaded_sessions
+                if loaded_sessions is not None
+                else self.storage.list_sessions()
+            )
             if not sessions:
                 return 0
 
             earliest_session = min(
                 sessions, key=lambda s: datetime.fromisoformat(s.created_at)
             )
-
             first_use = datetime.fromisoformat(earliest_session.created_at)
+            if persist:
+                try:
+                    first_use_file.write_text(first_use.isoformat())
+                except Exception as e:
+                    logger.debug(f"Could not save first-use time: {e}")
             return (datetime.now(UTC) - first_use).days
 
         except Exception as e:
@@ -313,7 +379,24 @@ class LocalAnalytics:
         if skipped is not None:
             return skipped
 
-        stats = self.collect_usage_stats()
+        # Every skip condition runs before any session file is read.
+        try:
+            from traigent.config.backend_config import BackendConfig
+
+            api_key_error = _analytics_api_key_error(BackendConfig.get_api_key())
+        except ImportError:
+            logger.debug("Backend client not available for analytics submission")
+            return {"success": False, "reason": "Backend client not available"}
+        if api_key_error:
+            return {"success": False, "reason": api_key_error}
+        if not may_send_telemetry():
+            return {"success": False, "reason": "Analytics disabled"}
+
+        # Off the event loop, so the caller's wait_for can fire; time-boxed so
+        # the worker thread also stops reading soon after.
+        stats = await asyncio.to_thread(
+            self.collect_usage_stats, _SUBMIT_SCAN_BUDGET_SECONDS
+        )
         if not stats:
             return {"success": False, "reason": "No stats to submit"}
 
@@ -321,14 +404,7 @@ class LocalAnalytics:
             # Import backend client lazily to avoid circular imports
             from traigent.cloud import backend_client as backend_client_module
 
-            # Get API key from environment
-            from traigent.config.backend_config import BackendConfig
-
             api_key = BackendConfig.get_api_key()
-            api_key_error = _analytics_api_key_error(api_key)
-            if api_key_error:
-                return {"success": False, "reason": api_key_error}
-
             if not may_send_telemetry():
                 return {"success": False, "reason": "Analytics disabled"}
             backend_client = backend_client_module.get_backend_client(

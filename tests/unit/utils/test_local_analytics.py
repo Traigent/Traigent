@@ -1314,3 +1314,121 @@ class TestEdgeCases:
 
                 # Should handle missing config gracefully
                 assert abs(stats["avg_config_space_size"] - 0.0) < 0.01
+
+
+class TestSubmitDoesNotStallEventLoop:
+    """The orchestrator wraps submit_usage_stats in wait_for(timeout=10)."""
+
+    @staticmethod
+    def _config(path: str) -> TraigentConfig:
+        return TraigentConfig(
+            execution_mode=ExecutionMode.LOCAL.value,
+            enable_usage_analytics=True,
+            local_storage_path=path,
+            anonymous_user_id="anon-test",
+        )
+
+    @staticmethod
+    def _write_sessions(path: str, count: int) -> None:
+        import json
+
+        storage = LocalStorageManager(path)
+        sid = storage.create_session("fn", {"configuration_space": {"a": [1, 2]}}, {})
+        session_file = storage.storage_path / "sessions" / f"{sid}.json"
+        template = json.loads(session_file.read_text())
+        session_file.unlink()
+        template["status"] = "completed"
+        template["completed_trials"] = 5
+        for i in range(count):
+            template["session_id"] = f"s{i:07d}"
+            (storage.storage_path / "sessions" / f"s{i:07d}.json").write_text(
+                json.dumps(template)
+            )
+
+    def test_wait_for_timeout_fires_with_many_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import time
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://127.0.0.1:9")
+        store = str(tmp_path / "store")
+        self._write_sessions(store, 6000)
+        analytics = LocalAnalytics(self._config(store))
+        timeout = 0.5
+
+        async def run() -> float:
+            start = time.monotonic()
+            try:
+                await asyncio.wait_for(analytics.submit_usage_stats(), timeout=timeout)
+            except TimeoutError:
+                pass
+            return time.monotonic() - start
+
+        with patch("traigent.utils.local_analytics.may_send_telemetry", return_value=True):
+            with patch(
+                "traigent.utils.local_analytics.usage_analytics_allowed",
+                return_value=True,
+            ):
+                elapsed = asyncio.run(run())
+        assert elapsed < timeout + 1.0
+
+    def test_no_api_key_never_lists_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("OPTIGEN_API_KEY", raising=False)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        with patch("traigent.utils.local_analytics.may_send_telemetry", return_value=True):
+            with patch(
+                "traigent.utils.local_analytics.usage_analytics_allowed",
+                return_value=True,
+            ), patch(
+                "traigent.config.backend_config.BackendConfig.get_api_key",
+                return_value=None,
+            ), patch.object(
+                analytics.storage, "list_sessions"
+            ) as listed, patch.object(
+                analytics.storage, "load_session"
+            ) as loaded:
+                result = asyncio.run(analytics.submit_usage_stats())
+        assert result["success"] is False
+        listed.assert_not_called()
+        loaded.assert_not_called()
+
+    def test_days_since_first_use_comes_from_stored_timestamp(
+        self, tmp_path: Path
+    ) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        stored = datetime.now(UTC) - timedelta(days=12, hours=1)
+        (Path(analytics.storage.storage_path) / ".first_use").write_text(
+            stored.isoformat()
+        )
+        with patch.object(analytics.storage, "list_sessions") as listed:
+            assert analytics._get_days_since_first_use() == 12
+        listed.assert_not_called()
+
+    def test_first_use_is_stored_when_missing(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        created = (datetime.now(UTC) - timedelta(days=5, hours=1)).isoformat()
+        session = OptimizationSession(
+            session_id="s1",
+            function_name="fn",
+            created_at=created,
+            updated_at=created,
+            status="completed",
+            total_trials=1,
+            completed_trials=1,
+            optimization_config={},
+            trials=[],
+        )
+        with patch.object(analytics.storage, "list_sessions", return_value=[session]):
+            assert analytics._get_days_since_first_use() == 5
+        with patch.object(analytics.storage, "list_sessions") as listed:
+            assert analytics._get_days_since_first_use() == 5
+        listed.assert_not_called()
