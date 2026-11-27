@@ -10,8 +10,9 @@ independently capped.
 
 Honesty contract (mirrors the SDK's cost-accounting discipline):
 
-- **Examples are counted on every execution path**, so exhaustion is enforced
-  deterministically within one run. Across overlapping optimization calls the cap is
+- **Examples are counted whenever a run reports how many it evaluated**, so
+  exhaustion is enforced within one run; a result with no example count (for
+  example, a rerun that returns nothing) can debit zero. Across overlapping optimization calls the cap is
   not guaranteed: each run takes its own sample pool from the shared remaining count
   and debits afterwards.
 - **The wall-clock deadline is enforced at trial boundaries.** Between trials it is a

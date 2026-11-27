@@ -2542,8 +2542,9 @@ class OptimizedFunction[**P, R]:
                 cost / examples / wall-clock across all of them; per-operation
                 limits still apply alongside the shared cap. A first batch of
                 spend can exceed the remaining budget, and the deadline allows
-                the watchdog grace for a hung trial. Examples are counted on every
-                path, but overlapping calls are not guaranteed to hold the cap.
+                the watchdog grace for a hung trial. Examples are counted when a run
+                reports an example count (a result without one can debit zero),
+                and overlapping calls are not guaranteed to hold the cap.
                 The recorded spend is a lower bound when cost is unobservable (see ``ExecutionBudget`` docs). ``None``
                 (default) leaves behavior unchanged.
             apply: ``True`` (default, the only supported value right now)

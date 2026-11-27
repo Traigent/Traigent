@@ -1073,7 +1073,8 @@ class OptimizationResult:
               budget's stop condition and its pre-batch admission gate; the per-run
               cost enforcer's own cost_limit is left intact, so the pre-run approval
               gate estimates against the user's configured limit rather than the
-              budget's remaining cost. Examples are counted on every path, but
+              budget's remaining cost. Examples are counted when a run reports how many it
+              evaluated (a result with no example count can debit zero), and
               overlapping optimization calls each take their own sample pool from
               the shared remaining count and debit afterwards, so the examples
               cap is not guaranteed across them; the deadline is hard at trial
