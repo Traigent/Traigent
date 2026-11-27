@@ -7,6 +7,18 @@ value as `None` in Python (`null` in JSON). For example, some numeric conversion
 return `None` when their input is missing or cannot be converted. Score
 aggregation can still substitute `0.0` for a missing score.
 
+When usage capture is enabled and available for a custom evaluator, the SDK
+aggregates each of the following metrics across examples:
+
+| Metrics | With strict nulls enabled |
+| --- | --- |
+| `input_tokens`, `output_tokens`, `total_tokens` | Each total is `None` if no example reports that count. |
+| `input_cost`, `output_cost`, `total_cost` | Each total is `None` if no example reports that amount. Explicit zero-cost evidence can produce a zero total. |
+| Requested cost objectives (`cost`, `input_cost`, `output_cost`, `total_cost`) | Set to `None` when the trial is flagged `cost_unmeasured`. |
+
+With strict nulls off, the custom-evaluator aggregation omits these unknown
+values.
+
 ## Usage
 
 Set the environment variable before running Traigent:
@@ -15,10 +27,16 @@ Set the environment variable before running Traigent:
 export TRAIGENT_STRICT_METRICS_NULLS=true
 ```
 
-The flag is off by default. The environment variable accepts `true`, `1`,
-`yes`, and `on`, without regard to case. Set it to `false` or leave it unset
-to use the default. You can also enable `strict_metrics_nulls` through a
-`TraigentConfig` passed to `traigent.initialize()`.
+Strict nulls are off by default. The environment variable accepts `true`,
+`1`, `yes`, and `on`, without regard to case. Set the variable to enable
+strict nulls for local evaluation metrics and custom-evaluator aggregation.
+
+Passing a `TraigentConfig` with `strict_metrics_nulls=True` to
+`traigent.initialize()` also enables strict nulls for custom-evaluator
+aggregation and other metric readers that honor the configuration. Those
+readers stay enabled when the variable is `false` or unset. The local
+evaluation metric formatter and its empty metric defaults read the
+environment variable directly.
 
 ## Best Practices
 

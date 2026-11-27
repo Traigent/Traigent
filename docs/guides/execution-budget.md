@@ -111,7 +111,11 @@ print(budget.debit_snapshot().remaining_budget_debit_usd)
 
 Four settlements of 0.05 from 0.21 leave 0.01. Another 0.05 reservation raises
 `BudgetDebitExceeded`. The refusal leaves the balance available for a smaller
-reservation. When the call raises or is cancelled, the `finally` block still
+reservation. If the refusal propagates from a search trial using that same
+budget, the search can stop with `result.stop_reason == "execution_budget"`
+and keep the pruned trial with any available partial example results.
+
+When the call raises or is cancelled, the `finally` block still
 settles the allowance. Use `lease.release_debit()` for a request you know was
 never placed or was nonbillable. Each lease can be settled or released once.
 
@@ -131,8 +135,13 @@ whose actual costs are unmeasured.
 An optimization result exposes the budget snapshot in
 `result.metadata["execution_budget"]`. A direct local evaluation exposes it as
 `result.execution_budget`. The snapshot includes consumed and remaining cost,
-examples, and time, along with trial counts and cost-tracking status. The
-serialized snapshot uses `None` for unbounded remaining amounts. The live
+examples, and time, along with trial counts and cost-tracking status.
+`exhausted_dimension` reports the exhausted balance as `"cost"`, `"examples"`,
+or `"deadline"`. It reports `"untracked_cost"` if `enforce_untracked_cost=True`
+blocks work because cost tracking is incomplete. When none of those conditions
+applies, it is `None`.
+
+The serialized snapshot uses `None` for unbounded remaining amounts. The live
 properties `remaining_cost`, `remaining_examples`, and `remaining_seconds`
 use `float("inf")` for unbounded amounts.
 
@@ -155,7 +164,7 @@ For a rule-based or lookup path that incurs no model charges, return
 `traigent.with_usage(value, total_cost=0)` during optimization to report
 zero cost explicitly. See the shared-budget example above.
 
-## Honesty — what is, and isn't, a hard guarantee
+## When limits take effect
 
 - **Examples.** A direct local evaluation admits examples from the shared
   pool. Optimization clamps its example pool to the remaining allowance at
@@ -167,11 +176,24 @@ zero cost explicitly. See the shared-budget example above.
   without a cost estimate that fits. The actual spend of a batch can exceed the
   remaining balance. Concurrent optimization runs can make admission
   decisions against the same remaining balance.
+- **Direct local evaluation.** The SDK checks remaining time and cost before
+  starting the evaluation, then records observed cost when the evaluation
+  returns. One evaluation phase can exceed the remaining time or cost.
 - **Incomplete cost tracking.** A trial with unknown cost can debit its known
-  spend while marking cost tracking incomplete. If an optimization finishes
-  with `cost_tracking` of `"partial"` or `"untracked"`, its result carries
-  `EXECUTION_BUDGET_UNTRACKED_COST` and describes consumed cost as a lower
-  bound. Set `enforce_untracked_cost=True` to block further admission when the
-  budget records incomplete cost tracking. A trial with unmeasured cost or a
-  call to `record_external(examples=1)` can make tracking incomplete. A budget
-  denial can also end winner rechecks without changing the run's stop reason.
+  spend while marking cost tracking incomplete. Calling `record_external()`
+  without `cost_usd` also marks tracking incomplete. If an optimization
+  finishes with `cost_tracking` of `"partial"` or `"untracked"`,
+  `result.warning_codes` includes `EXECUTION_BUDGET_UNTRACKED_COST` and the
+  warning describes consumed cost as a lower bound. Set
+  `enforce_untracked_cost=True` to block the start of a direct evaluation
+  or the next batch of optimization trials once the budget records
+  incomplete tracking. A direct call to `reserve_debit()` uses the allowance
+  limit and can succeed while cost tracking is incomplete.
+
+When the shared budget prevents the search loop from starting its next batch
+of trials, including when it blocks admission for incomplete cost tracking,
+the optimization records `result.stop_reason == "execution_budget"`. A direct
+local evaluation sets the same stop reason if its budget is exhausted at
+entry or after it records the evaluation's cost. The budget can also stop
+repeat evaluations of the best configuration while leaving the search's
+stop reason in place.

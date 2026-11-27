@@ -9,11 +9,11 @@ results in a direct local evaluation, set `detailed=True` on `LocalEvaluator`.
 | Client | Captured when | Notes |
 | --- | --- | --- |
 | LangChain `ChatOpenAI`, `ChatAnthropic`, and supported Bedrock chat models | The evaluator patches supported calls such as `invoke` and `ainvoke` | Stream capture uses usage from the final chunk. |
-| `litellm.completion` / `litellm.acompletion` | The evaluator's capture patch is active and the non-streaming response includes usage | The patch skips streaming responses. |
+| `litellm.completion` / `litellm.acompletion` | The evaluator's capture patch is active and the call is non-streaming | Token reporting depends on usage data. A positive response cost or an available LiteLLM cost estimate can supply cost without token usage. The patch skips streams. |
 | Traigent's `BedrockChatClient` | Capture is active and the response carries usage | |
 | OpenAI SDK, sync and async | The OpenAI override is active and the supported, non-streaming call returns usage | See the methods below. |
-| Anthropic SDK, sync and async | The override is active via `framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` or `traigent.integrations.override_anthropic()` | Captures usage from `messages.create` for non-streaming calls and from the final message of `messages.stream` on context exit, if available. |
-| Direct `google.genai` calls | Outside the SDK's client capture | For Gemini through LiteLLM, the same non-streaming and usage requirements apply. |
+| Anthropic SDK, sync and async | Call `traigent.integrations.override_anthropic()` for the process, or set both `auto_override_frameworks=True` and `framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` in the decorator's `injection` options | Captures usage from `messages.create` for non-streaming calls and from the final message of `messages.stream` on context exit, if available. |
+| Direct `google.genai` calls | Outside the SDK's client capture | Gemini calls through LiteLLM follow the LiteLLM rules above. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
 
@@ -49,8 +49,18 @@ price its tokens.
 
 `TRAIGENT_STRICT_COST_ACCOUNTING` sets strict runtime cost accounting
 explicitly. When unset, a `cost` objective enables strict runtime cost
-accounting for that optimization. An explicit cost limit can still refuse
-an unmeasured trial when strict cost accounting is off.
+accounting for that optimization. If a trial reaches cost accounting with
+missing or unpriced cost, strict mode raises `CostTrackingRequiredError`.
+If a trial fails solely on provider errors and every call raises before
+returning a response, the run can continue with that trial's spend marked unknown.
+
+For an unpriced model, supply rates as shown below. For an optimized function
+path that makes no model calls, return `traigent.with_usage(value, total_cost=0)`
+to report zero explicitly. To turn off strict accounting, set
+`TRAIGENT_STRICT_COST_ACCOUNTING=false`. If you enabled
+`TRAIGENT_REQUIRE_COST_TRACKING`, turn that off as well to allow missing or
+unpriced trial costs. An explicit cost limit can still refuse an unmeasured
+trial.
 
 Give the alias a price in USD per token with
 `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or point
@@ -87,12 +97,23 @@ labels results that lack mock provenance.
 
 ## When nothing was captured
 
-When a custom evaluator has usage capture enabled and available, an example
-without captured usage gets `metadata["llm_usage_measured"] = False`. The
-evaluator logs a coverage warning if it captures usage for only some examples.
-A custom evaluator can also report `provider_attempts=0` on failed rows. If
-every row failed before calling a provider and reports zero attempts, the
-trial can report `total_cost == 0.0` without setting `cost_unmeasured`.
+When usage capture is enabled and available for a custom evaluator, an
+`ExampleResult` that the SDK enriches without captured usage gets
+`metadata["llm_usage_measured"] = False`. If the evaluator raises and the SDK
+creates a failed row, that row can omit the key. The evaluator logs a coverage
+warning if it captures usage for only some examples.
+
+A custom evaluator can report zero provider attempts with
+`metrics["provider_attempts"] = 0` on a failed example. If every example failed
+before calling a provider and its metrics report zero attempts, the trial
+can report `total_cost == 0.0` without setting `cost_unmeasured`.
+
+## Reading cost results
+
+For local evaluation metrics, `cost` is the total for the trial and
+`cost_per_example_mean` is the mean across examples with measured cost.
+`tokens_estimated` is set when some token counts were estimated from text
+length. Those counts provide no evidence of billed spend.
 
 Check `cost_unmeasured` before interpreting a trial's numeric `cost` as a
 total. For a flagged trial, the results table shows `≥` when
@@ -106,23 +127,43 @@ trials, they show `total_cost` as `None` and report `cost_unmeasured_trials`
 and `cost_lower_bound`. The lower bound is `None` when there is no positive
 known spend.
 
-## When a run stops because cost was not measured
+## Per-run cost limits
 
-Set `cost_limit` on the decorator or optimization call, or set
-`TRAIGENT_RUN_COST_LIMIT`. The default cost limit is $2.00. With an explicit
-cost limit, the SDK raises when a non-failed trial completes with unmeasured
-cost, even if you set `max_trials` or `max_total_examples`.
+The SDK uses the per-run cost limit to check the estimate before asking for
+approval and to decide whether to start more trials during the run. A trial
+already running can spend more than estimated and take the run over the limit.
+Parallel trials already running can add to the overrun.
 
-With the default cost limit, a single unmeasured trial can activate a trial
-count fallback. That fallback defaults to 10 trials and can be set with
-`TRAIGENT_FALLBACK_TRIAL_LIMIT`. When it stops the run, the result can report
-`stop_reason == "cost_limit"` with
-`COST_UNMEASURED_TRIAL_LIMIT_REACHED`.
+Set `cost_limit` on the decorator or optimization call. When omitted, the SDK
+normally reads `TRAIGENT_RUN_COST_LIMIT`, with a default of $2.00. Passing the
+Python argument `cost_approved=True` without a Python `cost_limit` skips the
+approval prompt and uses $2.00 even if `TRAIGENT_RUN_COST_LIMIT` sets a
+different amount. In that case, a nonempty `TRAIGENT_RUN_COST_LIMIT` makes
+the cap count as explicit for the unmeasured-cost check.
 
-Passing `max_trials` or `max_total_examples` explicitly waives the trial count
-fallback, even when you pass the default number of trials. The cost limit still
-applies to known spend. When a result returns after running unmeasured trials
-under this waiver, check for `COST_UNMEASURED_TRIALS_RAN`.
+With an explicit cost limit, a non-failed trial that completes with
+unmeasured cost raises `CostTrackingRequiredError`, even when you set
+`max_trials` or `max_total_examples`.
+
+## When unmeasured cost stops a run
+
+When a run uses the inherited default cost limit and continues after an
+unmeasured trial, it can switch to a trial-count fallback. The fallback
+defaults to 10 trials and can be set with `TRAIGENT_FALLBACK_TRIAL_LIMIT`.
+A fallback stop can report `stop_reason == "cost_limit"` and
+`COST_UNMEASURED_TRIAL_LIMIT_REACHED` in `result.warning_codes`.
+
+After a fallback stop, capture priced usage or report a cost metric for
+every configuration. You can also explicitly size a local optimization
+with `max_trials` or `max_total_examples` to waive the trial-count fallback.
+Passing the default trial count explicitly also qualifies. `max_total_examples`
+caps examples across all trials and leaves the ordinary `max_trials` default
+of 10 in place. Managed optimization can still apply the fallback with
+explicit sizing.
+
+The per-run cost limit still applies to known spend. When a local result
+returns after running unmeasured trials under the waiver, check
+`result.warning_codes` for `COST_UNMEASURED_TRIALS_RAN`.
 
 For runs stopped by a trial, sample, or cost limit, check
 `result.metadata.get("stop_detail")` for an explanation. The results table
