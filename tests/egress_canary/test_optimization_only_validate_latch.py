@@ -453,16 +453,25 @@ def test_jwt_refresh_on_flagged_manager_that_cannot_latch_drops_old_state_and_em
     assert auth._auth_status == AuthStatus.INVALID
     assert auth._token_manager._refresh_token_secure is None
     assert auth._token_manager.get_authorization_header() == {}
-    # Control: with no API key to re-authenticate from, and under the recording
-    # transport, no credential is emitted and no auth request is sent.
+    # Control: re-authentication can find a key in two places: the copy AuthManager took
+    # of TRAIGENT_API_KEY at construction, and the env var the credential resolver
+    # re-reads. Clear both (set_api_key(None) drops the provided credentials and key
+    # token; delenv drops the env fallback), so re-authentication has nothing to
+    # authenticate with and must not be able to send a request.
     monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    auth.set_api_key(None)
+    assert auth._provided_credentials is None
     with capture_egress() as cap:
         with pytest.raises(InvalidCredentialsError) as excinfo:
             asyncio.run(auth.get_auth_headers())
-    assert cap.requests == []
-    text = repr(excinfo.value)
+    assert cap.requests == []  # no /keys/validate or any other auth request
+    # Pin the cause: the refusal comes from re-authentication having no credentials,
+    # not from some unrelated failure.
+    assert auth._last_auth_result.error_message == "No credentials provided"
+    assert "No credentials provided" in str(excinfo.value)
     for secret in (NEW_JWT, OLD_JWT, OLD_REFRESH, "refresh-new-0123456789"):
-        assert secret not in text
+        assert secret not in repr(excinfo.value)
+        assert secret not in (result.error_message or "")
 
 
 def test_jwt_refresh_on_unflagged_manager_ignores_latch_failure(

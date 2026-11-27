@@ -631,8 +631,15 @@ def _real_core_tracer(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Embedded core tracing with the REAL SDK provider/BatchSpanProcessor/OTLP exporter."""
     from traigent.core import tracing
 
-    if getattr(tracing, "_PLUGIN_AVAILABLE", False) or not tracing.OTEL_AVAILABLE:
-        pytest.skip("embedded tracing with real OpenTelemetry SDK not available")
+    if getattr(tracing, "_PLUGIN_AVAILABLE", False):
+        pytest.skip("traigent-tracing plugin installed")
+    if not tracing.OTEL_AVAILABLE:
+        # Missing SDK or OTLP http exporter: fail loudly, never skip a privacy test.
+        pytest.fail(
+            "embedded tracing needs the OpenTelemetry SDK and "
+            "opentelemetry-exporter-otlp-proto-http; install the 'tracing' extra "
+            "(pip install 'traigent[tracing]')"
+        )
     for name, value in {
         "TRACING_ENABLED": True,
         "_initialized": False,
