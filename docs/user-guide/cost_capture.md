@@ -1,102 +1,60 @@
 # Token and Cost Capture
 
-Traigent charges each trial for the LLM calls its examples make. It reads the
-provider's reported usage (prompt and completion tokens), prices it, and
-records token counts and costs on each example, and token and cost totals on
-each trial, where usage is reported and the model is priced.
-
-This page lists which calls are captured, how to price a model Traigent does
-not know, and what a trial reports when nothing was captured.
+Traigent can use captured LLM usage to compute trial token counts and cost.
+It can use a provider-reported cost or price captured tokens. To retain example
+results in a direct local evaluation, set `detailed=True` on `LocalEvaluator`.
 
 ## What is captured
 
 | Client | Captured when | Notes |
 | --- | --- | --- |
-| LangChain `ChatOpenAI`, `ChatAnthropic`, Bedrock chat models: `invoke`, `ainvoke`, `abatch`, `stream`, `astream` | always (patched by the evaluator) | `ainvoke`/`abatch` are captured ([#2424](https://github.com/Traigent/Traigent/issues/2424), [#2445](https://github.com/Traigent/Traigent/issues/2445)). `stream`/`astream` capture the last chunk, which carries usage only with `stream_usage=True`; without it the call is reported as unmeasured, not `$0` |
-| `litellm.completion` / `litellm.acompletion` | always (patched by the evaluator) | streaming calls are not captured |
-| Traigent's `BedrockChatClient` | always | |
-| Raw OpenAI SDK, sync and async: `chat.completions.create`, `chat.completions.parse` (also `beta.chat.completions.parse`), `completions.create`, `responses.create`, `responses.parse`, and the `with_raw_response` form of each | the OpenAI override is active (see below) | non-streaming calls that return `usage`. Responses API `input_tokens`/`output_tokens` are counted as prompt/completion tokens. Your code still receives the normal return value; a `with_raw_response` result is parsed once and the parsed object is cached, so your own `.parse()` returns it |
-| Raw Anthropic SDK, sync and async: `messages.create`, and `messages.stream` (usage is read from the final message when the `with` block exits) | the Anthropic override is active (`framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` or `override_anthropic()`) | `usage.input_tokens`/`output_tokens` ([#3250](https://github.com/Traigent/Traigent/issues/3250)). `create(stream=True)` and a `messages.stream` abandoned before its final event report no usage and stay unmeasured, never estimated from text length. Cache read/write tokens, which Anthropic reports beside `input_tokens`, are not priced separately yet (same as `ChatAnthropic`), so a prompt-cached call's cost is a lower bound |
-| Direct `google.genai` calls (Gemini API or Vertex AI client) | never | Traigent does not patch this client, so these calls are outside cost tracking. Its cost is not measured, and a run with a cost cap can stop with an unmeasured-cost error. Calling Gemini through `litellm.completion` gets its usage captured. |
+| LangChain `ChatOpenAI`, `ChatAnthropic`, and supported Bedrock chat models | The evaluator patches supported calls such as `invoke` and `ainvoke` | Stream capture uses usage from the final chunk. |
+| `litellm.completion` / `litellm.acompletion` | The evaluator's capture patch is active and the non-streaming response includes usage | The patch skips streaming responses. |
+| Traigent's `BedrockChatClient` | Capture is active and the response carries usage | |
+| OpenAI SDK, sync and async | The OpenAI override is active and the supported, non-streaming call returns usage | See the methods below. |
+| Anthropic SDK, sync and async | The override is active via `framework_targets=["anthropic.Anthropic", "anthropic.AsyncAnthropic"]` or `traigent.integrations.override_anthropic()` | Captures usage from `messages.create` for non-streaming calls and from the final message of `messages.stream` on context exit, if available. |
+| Direct `google.genai` calls | Outside the SDK's client capture | For Gemini through LiteLLM, the same non-streaming and usage requirements apply. |
 
 ### Raw OpenAI SDK calls (including OpenAI-compatible gateways)
 
-An agent that calls the OpenAI SDK directly is captured when the OpenAI
-framework override is active. Either turn it on for the whole process:
+Enable the OpenAI framework override for the process with this call.
 
 ```python
 from traigent.integrations.llms.openai import enable_openai_optimization
 
-enable_openai_optimization()  # patches openai.OpenAI and openai.AsyncOpenAI
+enable_openai_optimization()
 ```
 
-or name the classes on the decorator:
+For decorator-scoped overrides, set `auto_override_frameworks=True` and
+`framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"]` in the
+`injection` options on `@traigent.optimize`.
 
-```python
-client = openai.OpenAI(base_url=os.environ["LLM_BASE_URL"])  # build it once
-
-
-@traigent.optimize(
-    configuration_space={"model": ["gpt-5.4-mini", "gpt-5.2"]},
-    objectives=["accuracy", "cost"],
-    eval_dataset="data.jsonl",
-    auto_override_frameworks=True,
-    framework_targets=["openai.OpenAI", "openai.AsyncOpenAI"],
-)
-def answer(question: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-5.4-mini",  # replaced by the trial's model
-        messages=[{"role": "user", "content": question}],
-    )
-    return response.choices[0].message.content
-```
-
-Every call made while an example runs is charged, so an agent that calls the
-model several times per example is billed for all of them.
-
-Coverage limits:
-
-- **The override must be active.** Without `enable_openai_optimization()` or
-  `framework_targets`, raw OpenAI calls are not captured (issue
-  [#2441](https://github.com/Traigent/Traigent/issues/2441) tracks
-  capture that needs no opt-in).
-- **Streaming calls (`stream=True`) are not captured.** A stream's usage
-  arrives only after your code reads it, and only with
-  `stream_options={"include_usage": True}`. The example is reported as
-  unmeasured, not as `$0`.
-- **Responses without `usage`** (some gateways omit it) are not captured.
-  They are reported as unmeasured.
-- **Not captured:** streaming forms (`stream=True`, `chat.completions.stream`,
-  `responses.stream`), `completions.create` on a gateway that omits `usage`,
-  and any other method (embeddings, images, audio, `responses.retrieve`).
-  A client whose `with_raw_response` accessor was first used before the
-  override was activated keeps the unpatched method: build the client after
-  enabling the override, or access `with_raw_response` only afterwards.
-- The new parse and Responses paths are capture-only: Traigent records their
-  usage but does not inject trial parameters (`model`, `temperature`, ...)
-  into them. Only `chat.completions.create` and `completions.create` receive
-  injected parameters.
-- When LangChain's `ChatOpenAI.invoke` or `litellm.completion` makes the
-  OpenAI call for you, that wrapper records the usage and the underlying
-  OpenAI call is not counted a second time.
+- Supported capture methods include `chat.completions.create`,
+  `chat.completions.parse`, `beta.chat.completions.parse`, `completions.create`,
+  `responses.create`, and `responses.parse`, including their
+  `with_raw_response` forms.
+- The Responses API's `input_tokens` and `output_tokens` count as prompt and
+  completion tokens.
+- Activate the override before first accessing a client's `with_raw_response`
+  methods. The SDK parses those responses for usage and caches the parsed object
+  for your `.parse()` call.
+- For parameter injection, the override supports `chat.completions.create`
+  and `completions.create`.
 
 ## Pricing a model Traigent does not know
 
-Traigent prices tokens from LiteLLM's model table. A gateway alias such as
-`acme-gateway/house-model` is not in that table, so its calls are
-**unpriced**: tokens are recorded, cost is not known. What happens next
-depends on `TRAIGENT_STRICT_COST_ACCOUNTING`:
+Traigent can price captured tokens using LiteLLM's model table. If a gateway
+alias such as `acme-gateway/house-model` has no matching rate, supply one to
+price its tokens.
 
-- `true`: an unpriced model raises.
-- unset: a run whose objectives include `cost` is strict at runtime, so it
-  stops at the first call that has neither a table price nor a
-  provider-reported cost. A run without a `cost` objective continues and the
-  result carries an `UNPRICED_MODEL_RUNTIME` warning.
-- `false`: explicit opt-out. The run continues with the same warning.
+`TRAIGENT_STRICT_COST_ACCOUNTING` sets strict runtime cost accounting
+explicitly. When unset, a `cost` objective enables strict runtime cost
+accounting for that optimization. An explicit cost limit can still refuse
+an unmeasured trial when strict cost accounting is off.
 
-Give the alias a price with `TRAIGENT_CUSTOM_MODEL_PRICING_JSON` (inline) or
-`TRAIGENT_CUSTOM_MODEL_PRICING_FILE` (path to the same JSON). Prices are USD
-per token:
+Give the alias a price in USD per token with
+`TRAIGENT_CUSTOM_MODEL_PRICING_JSON` or point
+`TRAIGENT_CUSTOM_MODEL_PRICING_FILE` to a file with the same JSON.
 
 ```bash
 export TRAIGENT_CUSTOM_MODEL_PRICING_JSON='{
@@ -107,118 +65,69 @@ export TRAIGENT_CUSTOM_MODEL_PRICING_JSON='{
 }'
 ```
 
-The key must be the model name Traigent prices. In the custom-evaluator lane
-that is the trial's `model` setting when the configuration has one, otherwise
-the model the response reports.
+Use the model name Traigent prices as the key. For a custom evaluator, the SDK
+reads the model from the captured response. If the response omits the model,
+the SDK uses the trial's `model` setting.
 
 ## Mock provenance in result metadata
 
-A result records whether its LLM calls were simulated in `result.metadata`:
+Optimization results can record mock provenance in `result.metadata`.
 
 | Key | Meaning |
 |---|---|
-| `mock_llm_run` | `True` if any mock response was served during the run, `False` if the run's calls were real. |
-| `mock_llm_mixed` | Present and `True` only when both mock and real calls were observed. |
+| `mock_llm_run` | When the SDK observes calls, `True` means it served a mock response and `False` means it observed only real calls. |
+| `mock_llm_mixed` | When the SDK observes calls, `True` means it observed both simulated and real calls. |
 
-Both keys are saved and restored by `PersistenceManager`. A result saved before
-these keys existed, or built by hand, has no `mock_llm_run` key: that means
-**unknown**, not `False`. Read it with `result.metadata.get("mock_llm_run")` and
-treat `None` as "not recorded". The results table labels a recorded mock run,
-and hedges an unrecorded result only while mock mode is on in the process.
+When the SDK observes no calls, it falls back to the mock settings it saw
+during trial dispatch or at run start.
+
+Read `result.metadata.get("mock_llm_run")` and treat `None` as "not recorded".
+The results table labels a recorded mock run. With mock mode active, it also
+labels results that lack mock provenance.
 
 ## When nothing was captured
 
-A missing measurement is not a free call. When a custom-evaluator example has
-no captured usage, its result has `metadata["llm_usage_measured"] = False`
-and no token or cost keys. When no example in a trial was measured, the
-trial's cost is not reported as `0`; see below.
-When only some examples were measured, a warning names the coverage.
+When a custom evaluator has usage capture enabled and available, an example
+without captured usage gets `metadata["llm_usage_measured"] = False`. The
+evaluator logs a coverage warning if it captures usage for only some examples.
+A custom evaluator can also report `provider_attempts=0` on failed rows. If
+every row failed before calling a provider and reports zero attempts, the
+trial can report `total_cost == 0.0` without setting `cost_unmeasured`.
 
-The same holds for a `cost` objective. A local trial with no measured example
-has no `cost` key in its metrics, with strict nulls on or off, so
-`get_metric("cost")` is `None`. A custom evaluator with capture enabled and
-`TRAIGENT_STRICT_METRICS_NULLS=true` can have `cost` present as `None`; with
-strict nulls off the key is left out. `cost_unmeasured` is
-`1.0` on a trial where any example had no measured cost, and token counts
-estimated from text length (input from the dataset or prompt template, output from the returned string, about 4 characters per token; a system message written inside your function is not counted, so the estimate can be well below the provider's count) are labelled with `tokens_estimated` and are never priced. The results
-table shows the cost as `unmeasured`, or as `≥` the known spend when
-that is positive. When a cost objective drives ranking, `best_config` selection leaves out a
-trial flagged unmeasured. The Pareto front leaves out a trial that is
-missing a configured objective. A
-constraint written as `metrics.get("cost", 0) <= limit` accepts a trial whose
-`cost` key is left out, and raises `TypeError` when the value is `None`. Write
-`cost = metrics.get("cost")` and test `cost is not None and cost <= limit`
-instead.
-Workflow spans for an unmeasured trial, and for a failed or pruned trial that
-recorded no cost, send the known spend as `cost_usd` (`0.0` when none was
-reported) together with the metadata flag `traigent.cost_unmeasured: true`; the
-flag, not the number, says the cost is not a measurement. Run summaries
-(`get_summary()`, `experiment_stats`) set `total_cost` to `None` and report
-`cost_unmeasured_trials` and `cost_lower_bound` when any trial's cost is
-unmeasured. `cost_lower_bound` is `None` when there is no positive known spend.
+Check `cost_unmeasured` before interpreting a trial's numeric `cost` as a
+total. For a flagged trial, the results table shows `≥` when
+`cost_lower_bound` is positive and otherwise shows `unmeasured`. For a
+constraint requiring known cost within a limit, require a numeric
+`metrics.get("cost")` within the limit and reject trials flagged
+`cost_unmeasured`.
 
-A run that stops before the grid is exhausted records why in
-`result.metadata["stop_detail"]` and prints it under the results table: the SDK
-default `max_trials=10` when none was passed, an explicit `max_trials`, or the
-unmeasured-cost safety limit.
-A `metric_limit` on a cost metric leaves unmeasured trials out of its running
-total rather than failing the run. Two run-level warnings say what happened:
-
-- `COST_OBJECTIVE_NO_USAGE_CAPTURED`: no trial captured usage, so the cost
-  column is unmeasured. Under strict cost accounting the run fails instead.
-- `COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`: some successful trials captured
-  usage and others did not; the cost comparison covers only the measured ones.
+When run summaries (`get_summary()` and `experiment_stats`) count unmeasured
+trials, they show `total_cost` as `None` and report `cost_unmeasured_trials`
+and `cost_lower_bound`. The lower bound is `None` when there is no positive
+known spend.
 
 ## When a run stops because cost was not measured
 
-The cost limit (`cost_limit=` on `@traigent.optimize` or `.optimize()`, or
-`TRAIGENT_RUN_COST_LIMIT`, default `$2.00`) can only bound spend it can see.
-When any trial reports no cost, what happens depends on whether the limit is
-explicit and whether you sized the run yourself.
+Set `cost_limit` on the decorator or optimization call, or set
+`TRAIGENT_RUN_COST_LIMIT`. The default cost limit is $2.00. With an explicit
+cost limit, the SDK raises when a non-failed trial completes with unmeasured
+cost, even if you set `max_trials` or `max_total_examples`.
 
-**You set `cost_limit` or `TRAIGENT_RUN_COST_LIMIT` explicitly.** Once a
-non-failed trial completes with no reported cost, the run is refused with an
-error, even if you also set `max_trials` or `max_total_examples`. The
-fallbacks below apply only to the inherited default limit.
+With the default cost limit, a single unmeasured trial can activate a trial
+count fallback. That fallback defaults to 10 trials and can be set with
+`TRAIGENT_FALLBACK_TRIAL_LIMIT`. When it stops the run, the result can report
+`stop_reason == "cost_limit"` with
+`COST_UNMEASURED_TRIAL_LIMIT_REACHED`.
 
-**You did not set `max_trials` or `max_total_examples`.** Traigent is
-conservative: the run stops at a default safety limit of 10 trials
-(`TRAIGENT_FALLBACK_TRIAL_LIMIT` changes it) with
-`stop_reason == "cost_limit"`. One unmeasured trial is enough, even if every
-other trial was measured. The result carries the
-`COST_UNMEASURED_TRIAL_LIMIT_REACHED` warning code and a message, which is also
-logged, that says how many trials were unmeasured and how many were measured.
+Passing `max_trials` or `max_total_examples` explicitly waives the trial count
+fallback, even when you pass the default number of trials. The cost limit still
+applies to known spend. When a result returns after running unmeasured trials
+under this waiver, check for `COST_UNMEASURED_TRIALS_RAN`.
 
-**You set `max_trials` or `max_total_examples` explicitly**, on the decorator,
-on `OptimizedFunction(...)`, or on `.optimize()`/`.optimize_sync()`. That is
-taken as consent: the safety limit does not apply, and the run goes up to the
-size you set. Set `max_trials` to run more trials. `max_total_examples` caps the
-total number of examples across trials and also counts as your explicit
-consent, but it does not raise `max_trials`, which defaults to 10, so on its
-own it never yields more than 10 trials. The measured part of the spend is still
-bounded by `cost_limit`. The result carries `COST_UNMEASURED_TRIALS_RAN`, and a
-cost-objective run also carries `COST_OBJECTIVE_NO_USAGE_CAPTURED` or
-`COST_OBJECTIVE_PARTIAL_USAGE_CAPTURED`. "Explicitly" means you passed the
-argument; passing the same value as the default counts.
-
-To continue after the safety stop, either:
-
-1. **Get cost measured for every configuration.** Call the model through a
-   captured client (the table above).
-   In a mixed run, find why the unmeasured configurations report no usage: a
-   gateway that omits `usage`, a streaming call, or an uncaptured client. A
-   fully measured run is bounded by its cost budget instead of the trial limit,
-   so raise `cost_limit` if the budget is what stops you.
-2. **Size the run yourself** (default limit only). Set `max_trials` explicitly to run more trials,
-   for example `func.optimize_sync(max_trials=50)`. `max_total_examples` caps
-   total examples and also counts as your explicit consent, but does not raise
-   the default `max_trials` of 10. Traigent cannot tell you what the unmeasured
-   trials cost.
+For runs stopped by a trial, sample, or cost limit, check
+`result.metadata.get("stop_detail")` for an explanation. The results table
+prints this explanation when present.
 
 A `max_total_examples` passed to `.optimize()` or `.optimize_sync()` is kept on
 the function object, so later calls on the same object keep that sample budget
 (and keep counting as explicitly sized) until you change it.
-
-Build the OpenAI client once, outside the optimized function, as in the
-examples above. The override injects the trial's `model` and sampling
-parameters at `chat.completions.create`, not into the client constructor.

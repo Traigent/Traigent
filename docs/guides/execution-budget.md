@@ -1,262 +1,177 @@
 # Execution Budget Guide (Experimental)
 
-> **Status: experimental.** `ExecutionBudget` is the SDK's first
-> cross-call budgeting seam. The API may change in a future minor version — pin
-> your version if you depend on it in production.
-
-`ExecutionBudget` puts **one total cap** on cost, examples, and wall-clock time
-that is shared across direct `evaluate()` and `optimize()` calls. It is the tool
-for a multi-phase workflow — for example a **baseline → search → holdout**
-pipeline — where baseline and holdout are evaluations and search is optimization,
-but you want the *whole* pipeline to stay under a single budget.
-
-Without it, three phases each with `cost_limit=$1` can spend `$3` total. With one
-shared `ExecutionBudget(max_cost_usd=1.0)`, the three phases together stop once
-`$1` is spent, wherever in the pipeline that happens.
+`ExecutionBudget` shares cost, example, and time limits across calls. Pass the
+same budget to each phase of a workflow, such as baseline evaluation,
+optimization, and holdout evaluation.
 
 ## Creating a budget
 
-```python
-import traigent
-from traigent.evaluators import LocalEvaluator
-
-budget = traigent.ExecutionBudget(
-    max_cost_usd=5.0,        # total USD across every attached run
-    max_examples=2_000,      # total example evaluations across every attached run
-    deadline_seconds=1800,   # wall-clock deadline from first attach (30 min)
-)
-```
-
-At least one of `max_cost_usd`, `max_examples`, `deadline_seconds`, or
-`max_budget_debit_usd` must be set.
-Any value `<= 0` raises `ConfigurationError` at construction (a nonpositive cap
-would block every trial before it starts). Unset dimensions are unbounded.
-
-`enforce_untracked_cost=False` (default) preserves today's permissive behavior;
-set it to `True` to fail closed the moment cost becomes unobservable (see
-[Honesty](#honesty-what-is-and-isnt-a-hard-guarantee)).
+Set at least one of `max_cost_usd`, `max_examples`, `deadline_seconds`, or
+`max_budget_debit_usd`. Nonpositive limits raise `ConfigurationError`.
+Unset cost, example, and time limits leave those dimensions unbounded.
 
 ## Attaching a budget — explicit keyword
 
-The **only** way to attach a budget in this version is the explicit `budget=`
-keyword. Pass the **same instance** to every direct evaluator call and
-`optimize()` / `optimize_sync()` call in the workflow:
+Pass `budget=` to `evaluate()`, `optimize()`, or `optimize_sync()`. The context
+manager starts the clock if needed on entry and makes `final_snapshot` available
+on exit. Pass the budget explicitly even inside the context manager.
+
+This example shares an example limit across three phases. The optimization
+uses a rule-based function and reports zero model cost with `with_usage()`.
 
 ```python
-budget = traigent.ExecutionBudget(max_cost_usd=5.0, max_examples=2_000)
+import asyncio
 
-evaluator = LocalEvaluator(metrics=["accuracy"])
+import traigent
+from traigent.evaluators import Dataset, LocalEvaluator
 
-baseline = await evaluator.evaluate(answer, {}, baseline_dataset, budget=budget)
-search = await answer.optimize(budget=budget)  # same instance
-holdout = await evaluator.evaluate(answer, {}, holdout_dataset, budget=budget)
-```
 
-Each phase spends down the shared remaining. When the shared budget is exhausted,
-the current phase stops gracefully with `result.stop_reason == "execution_budget"`,
-and any later `evaluate()` or `optimize()` phase stops immediately before doing
-work it cannot admit. Direct evaluators expose the same additive
-`result.execution_budget` snapshot as their accounting result.
+def baseline_answer(value):
+    return value
 
-There is **no ambient/implicit attach** (no context-var, no global). This is a
-deliberate choice: `optimize_sync()` runs the optimization in a worker thread when
-a loop is already running, and thread-local ambient state does not propagate there
-— an implicit budget would be silently ignored in exactly that path. An explicit
-argument is deterministic and testable.
 
-`ExecutionBudget` **is** a context manager, but only to (1) start the wall-clock
-deadline on `__enter__` and (2) freeze a final snapshot on `__exit__`. It never
-suppresses exceptions and never ambient-attaches:
+search_data = Dataset([traigent.EvaluationExample({"value": 2}, 3)])
 
-```python
-with traigent.ExecutionBudget(deadline_seconds=600) as budget:
-    await answer.optimize(budget=budget)
-    await answer.optimize(budget=budget)
-print(budget.final_snapshot.as_dict())
+
+@traigent.optimize(
+    configuration_space={"offset": [0, 1]},
+    objectives=["accuracy"],
+    evaluation={"eval_dataset": search_data},
+    offline=True,
+    algorithm="grid",
+)
+def answer(value):
+    offset = traigent.get_config()["offset"]
+    return traigent.with_usage(value + offset, total_cost=0)
+
+
+async def main():
+    evaluator = LocalEvaluator(metrics=["accuracy"])
+    baseline_data = Dataset([traigent.EvaluationExample({"value": 2}, 3)])
+    holdout_data = Dataset([traigent.EvaluationExample({"value": 5}, 6)])
+
+    with traigent.ExecutionBudget(max_examples=4) as budget:
+        baseline = await evaluator.evaluate(
+            baseline_answer, {}, baseline_data, budget=budget
+        )
+        search = await answer.optimize(max_trials=2, budget=budget)
+        offset = search.best_config["offset"]
+
+        def tuned_answer(value):
+            return value + offset
+
+        holdout = await evaluator.evaluate(tuned_answer, {}, holdout_data, budget=budget)
+
+    print(baseline.execution_budget["consumed_examples"])
+    print(search.metadata["execution_budget"]["consumed_examples"])
+    print(holdout.execution_budget["consumed_examples"])
+    print(budget.final_snapshot.as_dict()["remaining_examples"])
+
+
+asyncio.run(main())
 ```
 
 ## Per-operation limits still apply
 
-Existing per-run limits (`cost_limit`, `max_total_examples`, `timeout`) remain
-fully supported and are **combined** with the shared cap: the effective per-run
-allowance is `min(per-run limit, shared remaining)`. A per-run limit can only make
-a run *tighter*, never let it exceed the shared cumulative cap.
-
-The examples pool and the wall-clock `timeout` are clamped down to the shared
-remaining at run start. The **cost** dimension is handled differently: the per-run
-`cost_limit` is *not* lowered — it stays your own pre-run approval gate — while the
-shared cumulative cost is enforced mid-run, at **batch/trial boundaries**, by the
-budget's stop condition and its pre-batch admission gate (which, in parallel mode,
-reserves budget for the *whole* next batch — see
-[Honesty](#honesty-what-is-and-isnt-a-hard-guarantee)). This is deliberate: it
-stops a small shared `max_cost_usd` from manufacturing a spurious pre-run
-`CostLimitExceeded` decline against your (larger) `cost_limit`. The run instead
-**starts and stops gracefully** with `stop_reason == "execution_budget"` once the
-shared cost is spent.
-
-```python
-# Per-run cost_limit=2.0, but shared remaining is 0.50 -> this run stops at ~0.50
-# with stop_reason == "execution_budget" (never a pre-run CostLimitExceeded).
-await answer.optimize(cost_limit=2.0, budget=traigent.ExecutionBudget(max_cost_usd=0.50))
-```
+At the start of optimization, the SDK can lower the per-run example cap and
+timeout to the shared budget's remaining examples and time. The per-run
+`cost_limit` still governs cost approval. The SDK checks the shared cost cap
+at batch and trial boundaries.
 
 ## Explicit allowances for unpriced calls
 
-When provider cost is unknown, a caller may explicitly allocate a conservative
-allowance to each call. This bounds **allocation debits**, not the provider's
-actual USD charge. Unknown actual cost stays unknown. This API is available from
-SDK 0.32.0; SDK 0.31.1 and earlier do not contain it.
+Use `max_budget_debit_usd` to cap allowances you allocate to calls whose cost
+you cannot price. Call `reserve_debit()` before each provider call you want to
+cover. The reservation accounts for both settled spend allowances and
+outstanding reservations. It releases the lock before the provider call.
 
 ```python
+import traigent
+
+
+def example_call():
+    return "Example response"
+
+
 budget = traigent.ExecutionBudget(max_budget_debit_usd=0.21)
 
-def call_provider():
-    lease = budget.reserve_debit(0.05)  # refuses BEFORE placing an unfunded call
-    try:
-        return existing_provider_call()
-    finally:
-        lease.settle_debit()           # retains 0.05 even on failure/cancellation
 
-result = await answer.optimize(budget=budget)
-local_allocation = budget.debit_snapshot()
-print(local_allocation.consumed_budget_debit_usd)
-print(local_allocation.remaining_budget_debit_usd)
+def call_with_allowance():
+    lease = budget.reserve_debit(0.05)
+    try:
+        return example_call()
+    finally:
+        lease.settle_debit()
+
+
+for _ in range(4):
+    print(call_with_allowance())
+print(budget.debit_snapshot().remaining_budget_debit_usd)
 ```
 
-The caller's provider-call door alone reserves and settles; the SDK engine never
-automatically charges an allocation debit. The same ledger can cover baseline,
-search, holdout, retries, fallback calls, and direct calls when each uses that
-door. Four 0.05 settlements from 0.21 leave 0.01; another 0.05 reservation raises
-`BudgetDebitExceeded` (import from `traigent.core.execution_budget`). In an
-attached optimization this stops gracefully with `stop_reason="execution_budget"`
-and retains completed trials and any detailed partial example rows. Outside
-optimization, callers handle this typed early-stop exception themselves.
+Four settlements of 0.05 from 0.21 leave 0.01. Another 0.05 reservation raises
+`BudgetDebitExceeded`. The refusal leaves the balance available for a smaller
+reservation. When the call raises or is cancelled, the `finally` block still
+settles the allowance. Use `lease.release_debit()` for a request you know was
+never placed or was nonbillable. Each lease can be settled or released once.
 
-Reservations count both consumed and in-flight allocations atomically across
-threads and async callers in this process. No lock spans the provider call.
-Failure and cancellation do not refund a reservation. Call `lease.release_debit()`
-only after proving the request was never placed or was nonbillable. A lease can
-be settled or released once, only by its owning budget. An optional finite,
-nonnegative `lease.settle_debit(amount)` records an explicit allocation settlement;
-larger amounts are retained without clamping and prevent future admission after
-an overrun. Record actual observed cost separately through existing usage
-telemetry or `record_external`; a debit settlement never supplies that telemetry.
+By default, settlement consumes the amount reserved. Pass a finite,
+nonnegative amount to `lease.settle_debit(amount)` to settle explicitly.
+A settlement that takes the balance over the cap is recorded in full and
+blocks further reservations.
 
-A refused large reservation does not exhaust or poison the shared object: a later
-phase can still reserve a smaller affordable amount. The optimizer's current run
-stops after refusal; it does not silently retry with a smaller allowance.
-
-`debit_snapshot()` is a separate local view containing `max_budget_debit_usd`,
-`consumed_budget_debit_usd`, `reserved_budget_debit_usd`,
-`remaining_budget_debit_usd`, and `overrun_budget_debit_usd`. These fields never
-extend the existing `snapshot()`, result metadata, backend payloads, cost floors,
-winner cost statistics, billing, or observability. No distributed or persistent
-reservation guarantee is provided. Memory is proportional to open leases; close
-each reservation in its provider door.
-
-Actual-cost `max_cost_usd`, explicit `cost_limit` / `TRAIGENT_RUN_COST_LIMIT`,
-strict tracking, and cost-objective refusals remain independent and unchanged.
-An explicit `cost_limit` / `TRAIGENT_RUN_COST_LIMIT` still refuses a completed
-trial with unknown cost, even when the run is explicitly sized; the shared
-budget records such a trial as untracked (see below). Do not mirror a
-nominal allowance into an actual-cost cap or clear a caller-supplied cost cap to
-make an unpriced run proceed.
+Read allocation amounts in `debit_snapshot()`, including the maximum,
+consumed, reserved, remaining, and overrun amounts. The ledger lives in the
+current process. Track observed provider charges separately, for example
+with `record_external()`. Explicit per-run cost limits still apply to trials
+whose actual costs are unmeasured.
 
 ## Reading what was consumed
 
-After a run, the budget's state is on the result metadata (the result shape is
-unchanged — this is additive):
-
-```python
-snap = result.metadata["execution_budget"]
-snap["consumed_cost"], snap["remaining_cost"]         # remaining is None when unbounded
-snap["consumed_examples"], snap["remaining_examples"]
-snap["elapsed_seconds"], snap["remaining_seconds"]
-snap["trials"], snap["untracked_trials"], snap["cost_tracking"]
-```
-
-You can also read the live object directly: `budget.remaining_cost`,
-`budget.remaining_examples`, `budget.remaining_seconds` (each `float("inf")` when
-that dimension is unbounded), `budget.consumed_cost`, `budget.snapshot()`.
+An optimization result exposes the budget snapshot in
+`result.metadata["execution_budget"]`. A direct local evaluation exposes it as
+`result.execution_budget`. The snapshot includes consumed and remaining cost,
+examples, and time, along with trial counts and cost-tracking status. The
+serialized snapshot uses `None` for unbounded remaining amounts. The live
+properties `remaining_cost`, `remaining_examples`, and `remaining_seconds`
+use `float("inf")` for unbounded amounts.
 
 ### Recording work the optimizer can't see
 
-Production calls (`fn.run()` / `fn(...)`) and other raw provider usage are **not**
-auto-debited. If you want them to count against the same budget, record them
-explicitly — e.g. from `with_usage()` data:
+Use `record_external()` to count observed costs or examples from production
+calls or other work outside a budgeted evaluation or optimization.
 
 ```python
+import traigent
+
+budget = traigent.ExecutionBudget(max_cost_usd=1.0, max_examples=10)
 budget.record_external(cost_usd=0.012, examples=1)
+print(budget.snapshot().as_dict())
 ```
 
 ### Agents that make no model calls
 
-Cost with no captured usage is treated as **unknown**, not `$0`: an unmeasured example would
-otherwise rank as the cheapest. If an example path genuinely makes no model calls
-(a rule-based or lookup agent), say so by wrapping its return value in
-`traigent.with_usage(value, total_cost=0)`. That records a *measured* `$0`:
-
-```python
-@traigent.optimize(
-    configuration_space={"threshold": [0.2, 0.5, 0.8]},
-    objectives=["accuracy", "cost"],
-    eval_dataset="qa.jsonl",
-)
-def answer(question: str):
-    threshold = traigent.get_config()["threshold"]
-    value = rule_based_answer(question, threshold)  # no provider call
-    return traigent.with_usage(value, total_cost=0)
-```
-
-Unwrapped, the same function reports cost as unmeasured and a strict run
-(`TRAIGENT_REQUIRE_COST_TRACKING`) names this fix in its error.
+For a rule-based or lookup path that incurs no model charges, return
+`traigent.with_usage(value, total_cost=0)` during optimization to report
+zero cost explicitly. See the shared-budget example above.
 
 ## Honesty — what is, and isn't, a hard guarantee
 
-- **Examples are a hard limit.** Observable on every execution path, so exhaustion
-  is enforced deterministically.
-- **The wall-clock deadline is enforced at trial boundaries.** Between trials it is
-  a hard stop. A single *hung* trial (a deadlocked sampler, a stuck provider call)
-  may overrun the deadline by the orchestrator's watchdog grace — 25% of the
-  remaining budget, floored at `1s` and capped at `5min` — before the watchdog
-  aborts it. So the deadline is hard at trial granularity, not a mid-trial
-  guillotine.
-- **The monetary cap is a hard limit only when cost is fully observable.** On raw
-  provider paths, self-hosted models, or unpriced models the SDK cannot see the
-  true cost of a call, so a trial may debit `$0` it actually cost money for. When
-  that happens:
-  - `snapshot()["cost_tracking"]` is `"partial"` or `"untracked"` (not
-    `"complete"`), and `budget.was_any_cost_untracked` is `True`;
-  - the result gains the `EXECUTION_BUDGET_UNTRACKED_COST` warning code and a
-    human-readable warning; and
-  - **the consumed cost is a lower bound** — the SDK will not claim a hard monetary
-    guarantee it cannot honor.
-
-  `enforce_untracked_cost=True` stops admission whenever `cost_tracking` is not
-  `"complete"`, with `stop_reason == "execution_budget"`. That happens after a trial
-  that reports no cost (`cost is None`, e.g. a raw-provider trial with no usage
-  data) or is flagged `cost_unmeasured` (such a trial is charged its known floor),
-  and after `budget.record_external(examples=1)` with no cost, even before any
-  trial is recorded.
-- **The cost cap is enforced at batch/trial boundaries, not per token.** The shared
-  remaining is checked by the pre-batch admission gate before each batch and by the
-  stop condition between trials — never mid-call. In **parallel** mode a batch of up
-  to `parallel_trials` trials is admitted together, so the gate only admits a batch
-  when the shared remaining can fund the whole batch's *estimated* cost. That makes
-  the cap a **tight bound of ± one batch** (± one trial in sequential mode): any
-  overshoot is at most one batch's worth of newly-admitted work, and only occurs
-  when trials cost more than their pre-batch estimate. It is **not** a per-trial-exact
-  hard ceiling. Examples and the wall-clock deadline are unaffected by this (examples
-  stay bounded by the sample-pool clamp and per-trial ceilings even under parallelism).
-
-## Out of scope (this version)
-
-- No persistent / cross-process / distributed budget (in-process only).
-- No auto-debit of `run()` / `__call__` production calls — use `record_external()`.
-- No ambient/implicit attach — the explicit `budget=` keyword is the API.
-- No cross-run cost *reservation*: the shared cost is debited from actuals and
-  enforced at batch/trial-boundary admission (the per-run `cost_limit` is not
-  clamped), so several runs sharing one budget **concurrently** can race on
-  admission, and a single run can overshoot the shared cap by about one **batch's**
-  actual cost in parallel mode (about one **trial's** in sequential mode). Run
-  phases sequentially, with `parallel_trials=1`, if you need the tightest cap.
+- **Examples.** A direct local evaluation admits examples from the shared
+  pool. Optimization clamps its example pool to the remaining allowance at
+  run start.
+- **Time.** Optimization checks the deadline between trials. A trial already
+  in progress can run past it.
+- **Cost.** Optimization checks the shared balance before admitting a batch
+  and accounts for reported spend as trials finish. The first batch can start
+  without a cost estimate that fits. The actual spend of a batch can exceed the
+  remaining balance. Concurrent optimization runs can make admission
+  decisions against the same remaining balance.
+- **Incomplete cost tracking.** A trial with unknown cost can debit its known
+  spend while marking cost tracking incomplete. If an optimization finishes
+  with `cost_tracking` of `"partial"` or `"untracked"`, its result carries
+  `EXECUTION_BUDGET_UNTRACKED_COST` and describes consumed cost as a lower
+  bound. Set `enforce_untracked_cost=True` to block further admission when the
+  budget records incomplete cost tracking. A trial with unmeasured cost or a
+  call to `record_external(examples=1)` can make tracking incomplete. A budget
+  denial can also end winner rechecks without changing the run's stop reason.
