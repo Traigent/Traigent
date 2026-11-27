@@ -9,6 +9,7 @@ All data sent is privacy-safe and contains no sensitive information.
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 import warnings
@@ -26,6 +27,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
+from traigent.utils.relative_change import relative_change
 from traigent.utils.send_policy import (
     _TelemetryAuthSuppressed,
     _usage_analytics_submission,
@@ -49,6 +51,9 @@ logger = logging.getLogger(__name__)
 # the thread itself stop shortly after instead of reading every session file.
 _SUBMIT_SCAN_BUDGET_SECONDS = 3.0
 _FIRST_USE_FILENAME = ".first_use"
+# Local session ids start with %Y%m%d_%H%M%S_%f (LocalStorageManager.create_session).
+_SESSION_ID_TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
+_SESSION_ID_TIME_LENGTH = 22
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
@@ -190,35 +195,75 @@ class LocalAnalytics:
 
         return user_id
 
-    def _load_sessions(self, time_budget: float | None) -> tuple[list[Any], int | None]:
-        """Load sessions; with a budget, stop reading once it is spent.
+    @staticmethod
+    def _session_id_time(name: str) -> datetime | None:
+        """Creation time encoded in a local session id, or None if not parseable."""
+        try:
+            return datetime.strptime(
+                name[:_SESSION_ID_TIME_LENGTH], _SESSION_ID_TIME_FORMAT
+            ).replace(tzinfo=UTC)
+        except ValueError:
+            return None
 
-        Returns ``(sessions, total_files)``. ``total_files`` is the number of
-        session files on disk when the scan was cut short, else ``None``.
+    def _scan_sessions(self, time_budget: float) -> dict[str, Any]:
+        """Budgeted scan: every step checks the deadline, so the caller's thread
+        ends within ``time_budget`` plus at most one file read.
+
+        Names are enumerated incrementally (``os.scandir``), then sessions are
+        read newest-first (ids start with their creation time).
         """
-        if time_budget is None:
-            return self.storage.list_sessions(), None
         deadline = time.monotonic() + time_budget
         sessions_dir = Path(self.storage.storage_path) / "sessions"
-        if not sessions_dir.exists():
-            return [], None
-        names = [f.stem for f in sessions_dir.glob("*.json")]
+        names: list[str] = []
+        enumerated_fully = True
+        try:
+            with os.scandir(sessions_dir) as entries:
+                for entry in entries:
+                    if time.monotonic() > deadline:
+                        enumerated_fully = False
+                        break
+                    if entry.name.endswith(".json"):
+                        names.append(entry.name[: -len(".json")])
+        except OSError:
+            pass
+        names.sort(reverse=True)
         sessions: list[Any] = []
+        read_fully = enumerated_fully
         for name in names:
             if time.monotonic() > deadline:
-                return sessions, len(names)
+                read_fully = False
+                break
             session = self.storage.load_session(name)
             if session:
                 sessions.append(session)
-        return sessions, None
+        return {
+            "sessions": sessions,
+            "names": names,
+            "enumerated_fully": enumerated_fully,
+            "read_fully": read_fully,
+        }
+
+    def _session_improvement(self, session: Any) -> Any:
+        """Improvement of the session already in memory (no second file read);
+        the same computation as ``LocalStorageManager.get_session_summary``."""
+        return relative_change(
+            session.baseline_score,
+            session.best_score,
+            self.storage._session_summary_orientation(session),
+        )
 
     def collect_usage_stats(self, time_budget: float | None = None) -> dict[str, Any]:
         """Collect privacy-safe aggregated usage statistics.
 
         Args:
             time_budget: Optional cap in seconds on reading session files. When
-                the cap is hit the aggregates cover the sessions read so far and
-                ``total_sessions`` is the file count on disk.
+                the cap is hit, ``total_sessions`` is still the file count and
+                ``days_since_first_use`` comes from the session ids, but every
+                other aggregate (completed/failed counts, trials, functions,
+                config-space and improvement averages) is computed from a
+                newest-first sample of the sessions read in time.
+                ``sessions_last_30_days`` is exact whenever the recent sessions
+                fit in the budget.
 
         Returns:
             Dictionary containing aggregated, non-sensitive stats
@@ -227,7 +272,26 @@ class LocalAnalytics:
             return {}
 
         try:
-            sessions, truncated_total = self._load_sessions(time_budget)
+            first_use_candidates: list[datetime] | None = None
+            persist_first_use = True
+            truncated_total: int | None = None
+            if time_budget is None:
+                sessions = self.storage.list_sessions()
+            else:
+                scan = self._scan_sessions(time_budget)
+                sessions = scan["sessions"]
+                persist_first_use = scan["enumerated_fully"]
+                if not scan["read_fully"]:
+                    truncated_total = len(scan["names"])
+                first_use_candidates = [
+                    t for t in map(self._session_id_time, scan["names"]) if t
+                ]
+                # Ids that do not encode a time fall back to the sample.
+                first_use_candidates += [
+                    datetime.fromisoformat(x.created_at)
+                    for x in sessions
+                    if self._session_id_time(x.session_id) is None
+                ]
             completed_sessions = [
                 s for s in sessions if s.status == OptimizationStatus.COMPLETED.value
             ]
@@ -258,11 +322,9 @@ class LocalAnalytics:
             # Performance improvement metrics (aggregated)
             improvements: list[float] = []
             for session in completed_sessions:
-                summary = self.storage.get_session_summary(session.session_id)
-                if isinstance(summary, dict):
-                    value = summary.get("improvement")
-                    if isinstance(value, (int, float)):
-                        improvements.append(float(value))
+                value = self._session_improvement(session)
+                if isinstance(value, (int, float)):
+                    improvements.append(float(value))
 
             avg_improvement = (
                 sum(improvements) / len(improvements) if improvements else None
@@ -289,8 +351,7 @@ class LocalAnalytics:
                 # Time-based metrics
                 "sessions_last_30_days": len(recent_sessions),
                 "days_since_first_use": self._get_days_since_first_use(
-                    sessions if time_budget is not None else None,
-                    persist=truncated_total is None,
+                    first_use_candidates, persist=persist_first_use
                 ),
                 # Version and environment (non-sensitive)
                 "sdk_version": get_version(),
@@ -312,14 +373,33 @@ class LocalAnalytics:
     def _first_use_file(self) -> Path:
         return Path(self.storage.storage_path) / _FIRST_USE_FILENAME
 
+    def _write_first_use(self, first_use: datetime) -> None:
+        """Atomic write (temp file + os.replace); never writes through a symlink."""
+        target = self._first_use_file()
+        if target.is_symlink():
+            logger.debug("Refusing to write first-use time through a symlink")
+            return
+        tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(first_use.isoformat())
+            os.replace(tmp, target)
+        except Exception as e:  # a concurrent writer or read-only dir is fine
+            logger.debug(f"Could not save first-use time: {e}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
     def _get_days_since_first_use(
-        self, loaded_sessions: list[Any] | None = None, persist: bool = True
+        self,
+        first_use_candidates: list[datetime] | None = None,
+        persist: bool = True,
     ) -> int:
         """Calculate days since first optimization session.
 
         Reads a stored first-use timestamp (next to ``.analytics_id``). Only when
-        it is missing is it derived once, from ``loaded_sessions`` if given or
-        else a full scan, and then stored so later calls never scan.
+        it is missing is it derived once, from ``first_use_candidates`` if given
+        or else a full scan, and then stored so later calls never scan.
         """
         try:
             first_use_file = self._first_use_file()
@@ -331,23 +411,19 @@ class LocalAnalytics:
             except (OSError, ValueError):
                 pass
 
-            sessions = (
-                loaded_sessions
-                if loaded_sessions is not None
-                else self.storage.list_sessions()
-            )
-            if not sessions:
+            if first_use_candidates is None:
+                first_use_candidates = [
+                    datetime.fromisoformat(s.created_at)
+                    for s in self.storage.list_sessions()
+                ]
+            if not first_use_candidates:
                 return 0
 
-            earliest_session = min(
-                sessions, key=lambda s: datetime.fromisoformat(s.created_at)
-            )
-            first_use = datetime.fromisoformat(earliest_session.created_at)
+            first_use = min(first_use_candidates)
+            if first_use.tzinfo is None:
+                first_use = first_use.replace(tzinfo=UTC)
             if persist:
-                try:
-                    first_use_file.write_text(first_use.isoformat())
-                except Exception as e:
-                    logger.debug(f"Could not save first-use time: {e}")
+                self._write_first_use(first_use)
             return (datetime.now(UTC) - first_use).days
 
         except Exception as e:
@@ -364,6 +440,33 @@ class LocalAnalytics:
             return {"success": False, "reason": "Submission not due yet"}
         return None
 
+    def _send_ineligibility(
+        self, force: bool
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """The single send-eligibility check, in the same order and with the same
+        conditions as ``submit_usage_stats`` on develop: the submission skip
+        gate, the API-key check, then ``may_send_telemetry``.
+
+        Returns ``(refusal_result, api_key)``; ``refusal_result`` is None when
+        sending is allowed.
+        """
+        skipped = self._submission_skip_result(force)
+        if skipped is not None:
+            return skipped, None
+        try:
+            from traigent.config.backend_config import BackendConfig
+
+            api_key = BackendConfig.get_api_key()
+        except ImportError:
+            logger.debug("Backend client not available for analytics submission")
+            return {"success": False, "reason": "Backend client not available"}, None
+        api_key_error = _analytics_api_key_error(api_key)
+        if api_key_error:
+            return {"success": False, "reason": api_key_error}, None
+        if not may_send_telemetry():
+            return {"success": False, "reason": "Analytics disabled"}, None
+        return None, api_key
+
     async def submit_usage_stats(self, force: bool = False) -> dict[str, Any]:
         """Submit usage statistics using existing backend session infrastructure.
 
@@ -375,36 +478,28 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
-        skipped = self._submission_skip_result(force)
-        if skipped is not None:
-            return skipped
-
-        # Every skip condition runs before any session file is read.
-        try:
-            from traigent.config.backend_config import BackendConfig
-
-            api_key_error = _analytics_api_key_error(BackendConfig.get_api_key())
-        except ImportError:
-            logger.debug("Backend client not available for analytics submission")
-            return {"success": False, "reason": "Backend client not available"}
-        if api_key_error:
-            return {"success": False, "reason": api_key_error}
-        if not may_send_telemetry():
-            return {"success": False, "reason": "Analytics disabled"}
+        # Eligibility runs before any session file is read.
+        refusal, _ = self._send_ineligibility(force)
+        if refusal is not None:
+            return refusal
 
         # Off the event loop, so the caller's wait_for can fire; time-boxed so
-        # the worker thread also stops reading soon after.
+        # the worker thread also stops soon after (asyncio.run joins it).
         stats = await asyncio.to_thread(
             self.collect_usage_stats, _SUBMIT_SCAN_BUDGET_SECONDS
         )
         if not stats:
             return {"success": False, "reason": "No stats to submit"}
 
-        try:
-            # Import backend client lazily to avoid circular imports
-            from traigent.cloud import backend_client as backend_client_module
+        # Conditions can change while collecting: evaluate again at send time.
+        refusal, api_key = self._send_ineligibility(force)
+        if refusal is not None:
+            return refusal
 
-            api_key = BackendConfig.get_api_key()
+        try:
+            from traigent.cloud import backend_client as backend_client_module
+            from traigent.config.backend_config import BackendConfig
+
             if not may_send_telemetry():
                 return {"success": False, "reason": "Analytics disabled"}
             backend_client = backend_client_module.get_backend_client(

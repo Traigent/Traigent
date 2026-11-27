@@ -100,13 +100,10 @@ def test_average_improvement_keeps_a_zero_average(tmp_path) -> None:
             status="completed",
             total_trials=1,
             completed_trials=1,
+            baseline_score=1.0,
+            best_score=1.0,
         )
     ]
-    with (
-        patch.object(analytics.storage, "list_sessions", return_value=sessions),
-        patch.object(
-            analytics.storage, "get_session_summary", return_value={"improvement": 0.0}
-        ),
-    ):
+    with patch.object(analytics.storage, "list_sessions", return_value=sessions):
         stats = analytics.collect_usage_stats()
     assert stats["avg_improvement_percent"] == 0.0

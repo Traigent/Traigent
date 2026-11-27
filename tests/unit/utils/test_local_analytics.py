@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -365,20 +366,17 @@ class TestCollectUsageStats:
                 status=OptimizationStatus.COMPLETED.value,
                 total_trials=10,
                 completed_trials=10,
+                baseline_score=1.0,
+                best_score=1.25,
             ),
         ]
 
         with patch.object(
             analytics_instance.storage, "list_sessions", return_value=sessions
         ):
-            with patch.object(
-                analytics_instance.storage,
-                "get_session_summary",
-                return_value={"improvement": 0.25},
-            ):
-                stats = analytics_instance.collect_usage_stats()
+            stats = analytics_instance.collect_usage_stats()
 
-                assert abs(stats["avg_improvement_percent"] - 25.0) < 0.01
+            assert abs(stats["avg_improvement_percent"] - 25.0) < 0.01
 
     def test_collect_usage_stats_recent_sessions(
         self, analytics_instance: LocalAnalytics
@@ -1206,9 +1204,7 @@ class TestEdgeCases:
 
         with patch.object(analytics.storage, "list_sessions", return_value=sessions):
             with patch.object(
-                analytics.storage,
-                "get_session_summary",
-                return_value={"improvement": "not-a-number"},
+                analytics, "_session_improvement", return_value="not-a-number"
             ):
                 stats = analytics.collect_usage_stats()
 
@@ -1239,11 +1235,7 @@ class TestEdgeCases:
         ]
 
         with patch.object(analytics.storage, "list_sessions", return_value=sessions):
-            with patch.object(
-                analytics.storage,
-                "get_session_summary",
-                return_value={"improvement": None},
-            ):
+            with patch.object(analytics, "_session_improvement", return_value=None):
                 stats = analytics.collect_usage_stats()
 
                 # Should handle None gracefully
@@ -1349,33 +1341,57 @@ class TestSubmitDoesNotStallEventLoop:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import asyncio
+        import importlib
         import time
 
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
-        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://127.0.0.1:9")
         store = str(tmp_path / "store")
-        self._write_sessions(store, 6000)
+        total = 100
+        self._write_sessions(store, total)
         analytics = LocalAnalytics(self._config(store))
         timeout = 0.5
+        # Keep the worker budget below the cap so executor shutdown is quick.
+        monkeypatch.setattr(
+            "traigent.utils.local_analytics._SUBMIT_SCAN_BUDGET_SECONDS",
+            0.3,
+            raising=False,
+        )
+        reads: list[str] = []
+        real_load = LocalStorageManager.load_session
 
-        async def run() -> float:
-            start = time.monotonic()
+        def slow_load(self_: LocalStorageManager, session_id: str):
+            reads.append(session_id)
+            time.sleep(0.05)
+            return real_load(self_, session_id)
+
+        monkeypatch.setattr(LocalStorageManager, "load_session", slow_load)
+
+        def no_transport(**_: Any) -> Any:
+            raise RuntimeError("transport stubbed")
+
+        monkeypatch.setattr(
+            importlib.import_module("traigent.cloud.backend_client"),
+            "get_backend_client",
+            no_transport,
+        )
+
+        async def run() -> None:
             try:
                 await asyncio.wait_for(analytics.submit_usage_stats(), timeout=timeout)
             except TimeoutError:
                 pass
-            return time.monotonic() - start
 
+        start = time.monotonic()
+        # asyncio.run joins the default executor, so thread shutdown is timed too.
         with patch(
-            "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+            "traigent.utils.local_analytics.usage_analytics_allowed",
+            return_value=True,
         ):
-            with patch(
-                "traigent.utils.local_analytics.usage_analytics_allowed",
-                return_value=True,
-            ):
-                elapsed = asyncio.run(run())
-        assert elapsed < timeout + 1.0
+            asyncio.run(run())
+        elapsed = time.monotonic() - start
+        assert elapsed < timeout + 0.5
+        assert len(reads) < total
 
     def test_no_api_key_never_lists_sessions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1437,3 +1453,33 @@ class TestSubmitDoesNotStallEventLoop:
         with patch.object(analytics.storage, "list_sessions") as listed:
             assert analytics._get_days_since_first_use() == 5
         listed.assert_not_called()
+
+    def test_first_use_from_session_ids_persists_when_truncated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        monkeypatch.setattr(
+            LocalStorageManager,
+            "load_session",
+            lambda self_, sid: time.sleep(0.1),
+        )
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        sessions_dir = Path(analytics.storage.storage_path) / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        old = datetime.now(UTC) - timedelta(days=40, hours=1)
+        for stamp in (old, datetime.now(UTC)):
+            name = stamp.strftime("%Y%m%d_%H%M%S_%f") + "_fn_abcd1234"
+            (sessions_dir / f"{name}.json").write_text("{}")
+        stats = analytics.collect_usage_stats(time_budget=0.03)
+        assert stats["total_sessions"] == 2
+        assert stats["days_since_first_use"] == 40
+        assert (Path(analytics.storage.storage_path) / ".first_use").exists()
+
+    def test_first_use_write_refuses_symlink(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        target = tmp_path / "elsewhere"
+        target.write_text("keep")
+        (Path(analytics.storage.storage_path) / ".first_use").symlink_to(target)
+        analytics._write_first_use(datetime.now(UTC))
+        assert target.read_text() == "keep"
