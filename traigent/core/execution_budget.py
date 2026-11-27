@@ -23,12 +23,15 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
 - **The monetary cap is enforced at batch/trial boundaries, not per token.** The
   orchestrator checks the shared remaining in its pre-batch admission gate before
   each batch and in the stop condition between trials. In *parallel* mode a batch of
-  up to ``parallel_trials`` trials is admitted together (the gate only admits a batch
-  the remaining can fund in full), so the cap is a tight bound of **± one batch**
-  (± one trial in sequential mode) — not a per-trial-exact hard ceiling. Any overshoot
-  is bounded to one batch's newly-admitted work and only arises when trials cost more
-  than their pre-batch estimate. A first batch (before any measured cost exists) is
-  admitted on a default guess and can exceed the remaining budget.
+  up to ``parallel_trials`` trials is admitted together, so within one run the cap
+  holds to about **one batch** (one trial in sequential mode) — not a per-trial-exact
+  hard ceiling. After the first measured costs, a batch is admitted only when its
+  estimated cost fits the remaining budget, and overshoot comes from trials costing
+  more than estimated. The first batch, admitted before any cost is measured, skips
+  that affordability check and can exceed the remaining budget even when it costs less
+  than the default estimate. Overlapping optimization calls each read the shared
+  remaining balance and debit after each trial, so together they can overshoot by
+  more than one batch.
 - **The monetary cap is only as reliable as the cost the SDK can observe.** On raw
   provider paths, self-hosted models, or unpriced models the SDK cannot see the true
   cost, so a trial may debit ``$0`` it did not actually cost. When that happens the
