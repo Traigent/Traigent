@@ -48,10 +48,9 @@ pin cannot, because it only runs when `traigent/__init__.py` first executes,
 which is already too late. The egress test keeps this as a strict xfail
 (`test_litellm_imported_first_reaches_no_third_party_host`).
 
-With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status on a host without network access: litellm's import-time pricing-map fetch fails, and the process can abort as the interpreter shuts down (intermittently; litellm 1.110.4 and 1.108.6 were not affected in our tests). Import `traigent` first, or set `LITELLM_LOCAL_MODEL_COST_MAP=True` before importing litellm.
+With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. In our tests on a host without network (Docker `--network none`), litellm 1.111.0 exited non-zero in some runs after its pricing-map fetch failed; no such exits were observed with 1.110.4 or 1.108.6. With the default pricing settings (`TRAIGENT_LITELLM_LIVE_PRICES` unset and `LITELLM_LOCAL_MODEL_COST_MAP` not set to `false`), import `traigent` first; or set `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import.
 
-**What happens when the network is blocked.** In `docker run --network none`
-every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
+**What happens when the network is blocked.** In the recorder runs described here (`docker run --network none`), every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
 well under a second (default vs pinned `optimize_mock`: 11.9 s vs 11.3/11.7 s),
 so the 5 s litellm timeout was not observed; it would apply only where a
 firewall silently *drops* packets — unmeasured. The Hugging Face path is
