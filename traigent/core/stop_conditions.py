@@ -572,8 +572,9 @@ class MetricLimitStopCondition(StopCondition):
     stops before the next trial once the configured metric has reached the limit.
     For spend control, use ``cost_limit`` and ``CostLimitStopCondition``; the
     cost estimate is checked before each trial once one is available (the first
-    trial can start before a measured estimate exists), and an admitted trial can
-    still overshoot.
+    trial can start before a measured estimate exists), except on the unwaived
+    unknown-cost path, which checks trial count and committed spend without
+    adding the next trial's estimate. An admitted trial can still overshoot.
     """
 
     reason = "metric_limit"

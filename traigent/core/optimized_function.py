@@ -4279,9 +4279,8 @@ class OptimizedFunction[**P, R]:
             message = (
                 "ExecutionBudget: cost tracking was "
                 f"{snapshot.cost_tracking!r} ({snapshot.untracked_trials} of "
-                f"{snapshot.trials} trial(s) had unobservable cost). The consumed "
-                "cost is a lower bound, so the spend limit was checked against "
-                "less than the real spend."
+                f"{snapshot.trials} trial(s) had unobservable cost). The recorded "
+                "spend may be lower than the real spend."
             )
             if message not in result.warnings:
                 result.warnings.append(message)

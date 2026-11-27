@@ -16,11 +16,11 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   example, a rerun that returns nothing) can debit zero. Across overlapping optimization calls the cap is
   not guaranteed: each run takes its own sample pool from the shared remaining count
   and debits afterwards.
-- **The wall-clock deadline is enforced at trial boundaries.** Between trials it is a
-  hard stop; a single *hung* trial (a deadlocked sampler or stuck provider call) may
-  overrun the deadline by the orchestrator's watchdog grace (25% of the remaining
-  budget, floored at ``1s``, capped at ``5min``) before the watchdog aborts it — so
-  the deadline is hard at trial granularity, not a mid-trial guillotine.
+- **The wall-clock deadline is checked at trial boundaries.** The search can await a
+  configuration and start evaluating it without rechecking, and a running trial (for
+  example a deadlocked sampler or stuck provider call) is cancelled only after the
+  orchestrator's watchdog grace (25% of the remaining budget, floored at ``1s``,
+  capped at ``5min``), so the deadline can be overrun by a trial.
 - **The monetary cap is enforced at batch/trial boundaries, not per token.** The
   orchestrator checks the shared remaining in its pre-batch admission gate before
   each batch and in the stop condition between trials. In *parallel* mode a batch of
@@ -45,12 +45,12 @@ Honesty contract (mirrors the SDK's cost-accounting discipline):
   The most common trigger is a trial that reports NO cost (``cost is None`` — e.g. a
   raw-provider trial with no usage data): the next admission after such a trial stops
   with ``stop_reason == "execution_budget"``.
-  A model that is merely *unpriced* but reports a concrete ``$0`` is NOT caught
-  mid-run (that debit is indistinguishable from a genuinely free ``$0`` trial); the
-  silent-``$0`` path is reconciled at **finalization** — folded into
-  ``cost_tracking`` via the ``CostEnforcer`` ``unknown_cost_mode`` state and the
-  ``UNPRICED_MODEL_RUNTIME`` warning (see ``mark_cost_untracked``) and surfaced as a
-  lower-bound cost, not stopped while running.
+  The normal evaluator flags unpriced usage as unmeasured, and the orchestrator
+  checks that mid-run. The remaining gap is an unflagged ``$0``, which is
+  indistinguishable from a genuinely free trial; it is surfaced only if something
+  else marks tracking incomplete at **finalization** (the ``CostEnforcer``
+  ``unknown_cost_mode`` state or the ``UNPRICED_MODEL_RUNTIME`` warning, see
+  ``mark_cost_untracked``), as a lower-bound cost, not stopped while running.
 
 The budget is thread-safe (``threading.RLock``); ``debit_trial`` is a plain sync
 method called from inside the orchestrator's async state-lock and **never raises into

@@ -3569,12 +3569,16 @@ def optimize(  # NOSONAR(S107)
                 $2.00 even if TRAIGENT_RUN_COST_LIMIT is set (a nonempty
                 TRAIGENT_RUN_COST_LIMIT still makes the cap explicit). It
                 cannot bound spend it cannot see. A trial's cost is
-                unmeasured when no LLM usage was captured or captured tokens
-                have no matching rate. With an explicit cost limit, a
+                unmeasured when no LLM usage was captured, or captured tokens
+                have no matching rate and no cost was reported (an explicit
+                zero, or a positive provider-reported or user-supplied cost,
+                counts as measured). With an explicit cost limit, a
                 non-failed trial with unmeasured cost raises
                 ``CostTrackingRequiredError``. With the inherited default
-                limit, the run continues and stops at a default safety limit
-                of 10 trials (TRAIGENT_FALLBACK_TRIAL_LIMIT) with
+                limit, the run continues, unless strict cost accounting raises
+                or known spend reaches the limit first, and otherwise stops at
+                a default safety limit of 10 trials
+                (TRAIGENT_FALLBACK_TRIAL_LIMIT) with
                 ``stop_reason == "cost_limit"`` and warning
                 ``COST_UNMEASURED_TRIAL_LIMIT_REACHED``. For a local
                 optimization, passing ``max_trials`` explicitly (here or to

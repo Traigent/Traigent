@@ -6840,8 +6840,8 @@ class OptimizationOrchestrator:
                     "trials, so the cost limit cannot bound spend and the "
                     f"default safety limit of "
                     f"{enforcer.config.fallback_trial_limit} trials applied "
-                    "(TRAIGENT_FALLBACK_TRIAL_LIMIT). Pass max_trials=... to "
-                    "run more."
+                    "(TRAIGENT_FALLBACK_TRIAL_LIMIT). In a local run, pass "
+                    "max_trials=... to run more; a managed run keeps this limit."
                 )
         return None
 
