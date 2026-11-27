@@ -1947,6 +1947,11 @@ class BackendIntegratedClient:
             raise CloudEgressBlockedError(operation)
         raise_if_cloud_egress_disabled(operation, no_egress=self.no_egress)
 
+    def _backend_url_for_send(self, url: str, operation: str) -> str:
+        """Recheck egress after preflight, while evaluating the HTTP call's URL."""
+        self._raise_if_backend_egress_disabled(operation)
+        return url
+
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the running loop's aiohttp session."""
 
@@ -3034,7 +3039,7 @@ class BackendIntegratedClient:
                 self._raise_if_backend_egress_disabled("publish best config")
                 preflight_requests("POST", url, json=body_json)
                 response = requests.post(  # nosec B113 - timeout is provided
-                    url,
+                    self._backend_url_for_send(url, "publish best config"),
                     json=body_json,
                     headers=headers,
                     timeout=min(self.timeout, 30.0),
@@ -3304,7 +3309,7 @@ class BackendIntegratedClient:
         self._raise_if_backend_egress_disabled("fetch content-identity keys")
         preflight_requests("POST", url)
         response = requests.post(  # nosec B113 - timeout is provided
-            url,
+            self._backend_url_for_send(url, "fetch content-identity keys"),
             headers=headers,
             timeout=(min(self.timeout, 5.0), min(self.timeout, 10.0)),
             allow_redirects=False,
@@ -3368,7 +3373,7 @@ class BackendIntegratedClient:
             preflight_requests(method, url, json=body)
             response = requests.request(  # nosec B113 - timeout is provided
                 method,
-                url,
+                self._backend_url_for_send(url, "call the process-record service"),
                 headers=headers,
                 json=body,
                 timeout=(min(self.timeout, 5.0), self.timeout),

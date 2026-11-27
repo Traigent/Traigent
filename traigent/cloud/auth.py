@@ -1788,14 +1788,15 @@ class AuthManager:
         Unsafe backend URL configuration raises before the request payload or
         ``X-API-Key`` header is constructed.
         """
-        from traigent.cloud.client import cloud_backend_egress_disabled
+        from traigent.cloud.client import no_egress_flag_enabled
         from traigent.config.backend_config import BackendConfig
         from traigent.utils.env_config import is_backend_offline
 
         if (reason := self._key_validation_egress_reason()) is not None:
             return reason
-        if cloud_backend_egress_disabled(self.no_egress):
-            return self._backend_egress_reason(is_backend_offline())
+        offline = is_backend_offline()
+        if offline or no_egress_flag_enabled(self.no_egress):
+            return self._backend_egress_reason(offline)
 
         try:
             backend_api_url = BackendConfig.build_api_base(
@@ -1903,8 +1904,8 @@ class AuthManager:
         reason = (
             "backend offline mode enabled" if offline else "backend egress disabled"
         )
-        if _is_telemetry_key_validation():
-            # Withheld by egress policy during telemetry validation, not a rejected key.
+        if offline and _is_telemetry_key_validation():
+            # Offline can interrupt a telemetry validation already in progress.
             return _WithheldKeyValidation(reason)
         return reason
 
@@ -2058,13 +2059,14 @@ class AuthManager:
         """Requests fallback for backend key validation when aiohttp is unavailable."""
         import requests
 
-        from traigent.cloud.client import cloud_backend_egress_disabled
+        from traigent.cloud.client import no_egress_flag_enabled
         from traigent.utils.env_config import is_backend_offline
 
         if (reason := self._key_validation_egress_reason()) is not None:
             return reason
-        if cloud_backend_egress_disabled(self.no_egress):
-            return self._backend_egress_reason(is_backend_offline())
+        offline = is_backend_offline()
+        if offline or no_egress_flag_enabled(self.no_egress):
+            return self._backend_egress_reason(offline)
 
         try:
             validation_payload = freeze_json_body(validation_payload)

@@ -4,8 +4,10 @@ import ast
 import asyncio
 import gzip
 import importlib.util
+import inspect
 import json
 import socket
+import sys
 from collections import Counter
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context
@@ -1473,9 +1475,13 @@ def test_best_config_rechecks_before_each_get(monkeypatch, flag, point):
     get_headers.assert_awaited_once()
 
 
-@pytest.mark.parametrize("flag", (None, OFFLINE))
+@pytest.mark.parametrize(
+    ("flag", "point"), ((None, "online"), (OFFLINE, "headers"), (OFFLINE, "preflight"))
+)
 @pytest.mark.parametrize("operation", ("publish", "purpose-keys", "process-record"))
-def test_sync_backend_writes_recheck_before_preflight(monkeypatch, flag, operation):
+def test_sync_backend_writes_recheck_around_preflight(
+    monkeypatch, flag, point, operation
+):
     from traigent.cloud.client import CloudEgressBlockedError
 
     client = backend_client.BackendIntegratedClient.__new__(
@@ -1488,7 +1494,8 @@ def test_sync_backend_writes_recheck_before_preflight(monkeypatch, flag, operati
     client.max_retries = 1
 
     def prepare_headers(**kwargs):
-        _flip(monkeypatch, flag)
+        if point == "headers":
+            _flip(monkeypatch, flag)
         return dict(HEADERS)
 
     headers = Mock(side_effect=prepare_headers)
@@ -1498,7 +1505,14 @@ def test_sync_backend_writes_recheck_before_preflight(monkeypatch, flag, operati
     send = Mock(return_value=response)
     monkeypatch.setattr(requests, "post", send)
     monkeypatch.setattr(requests, "request", send)
-    preflight = Mock(wraps=backend_client.preflight_requests)
+    real_preflight = backend_client.preflight_requests
+
+    def prepare_request(*args, **kwargs):
+        real_preflight(*args, **kwargs)
+        if point == "preflight":
+            _flip(monkeypatch, flag)
+
+    preflight = Mock(side_effect=prepare_request)
     monkeypatch.setattr(backend_client, "preflight_requests", preflight)
     calls = {
         "publish": (
@@ -1523,7 +1537,7 @@ def test_sync_backend_writes_recheck_before_preflight(monkeypatch, flag, operati
             call()
         send.assert_not_called()
     headers.assert_called_once_with(target="backend")
-    assert preflight.call_count == int(flag is None)
+    assert preflight.call_count == int(point != "headers")
 
 
 @pytest.mark.parametrize("flag", (None, OFFLINE))
@@ -1724,6 +1738,28 @@ async def test_telemetry_key_validation_before_executor_entry(monkeypatch, flag)
                 await manager.get_headers()
     assert post.call_count == int(flag is None)
     assert manager._stats["failed_authentications"] == 0
+
+
+async def test_telemetry_key_validation_keeps_explicit_no_egress_invalid(monkeypatch):
+    manager = auth.AuthManager(
+        config=auth.UnifiedAuthConfig(backend_base_url=ORIGIN, cache_credentials=False),
+        api_key="tg_" + "a" * 61,  # pragma: allowlist secret
+        no_egress=True,
+    )
+    open_session = Mock()
+    post = Mock()
+    monkeypatch.setattr(auth.aiohttp, "ClientSession", open_session)
+    monkeypatch.setattr(requests, "post", post)
+
+    with _analytics_submission():
+        result = await manager.authenticate_with_result()
+
+    assert not result.success
+    assert result.status is auth.AuthStatus.INVALID
+    assert result.error_message == "API key validation failed: backend egress disabled"
+    assert manager._stats["failed_authentications"] == 1
+    open_session.assert_not_called()
+    post.assert_not_called()
 
 
 @pytest.mark.parametrize("flag", (OPT_OUT, OFFLINE))
@@ -2034,14 +2070,16 @@ async def test_jwt_refresh_rechecks_without_invalidating_credentials(
 
 
 @pytest.mark.parametrize("flag", FLAGS)
-@pytest.mark.parametrize("operation", ("list", "detail", "observations"))
-def test_legacy_trace_reads_recheck_after_building_headers(
-    monkeypatch, flag, operation
-):
+@pytest.mark.parametrize(
+    "operation",
+    ("list", "detail", "observations", "session-list", "session-detail", "comments"),
+)
+def test_legacy_reads_recheck_after_building_headers(monkeypatch, flag, operation):
     from traigent.utils.exceptions import ClientError
 
     client = _legacy_client()
     trace = {"id": "trace-1", "name": "trace"}
+    session = {"id": "session-1"}
     reads = {
         "list": (client.list_traces, {"items": [trace]}),
         "detail": (lambda: client.get_trace("trace-1"), trace),
@@ -2049,6 +2087,9 @@ def test_legacy_trace_reads_recheck_after_building_headers(
             lambda: client.get_trace_observations("trace-1"),
             {"trace_id": "trace-1"},
         ),
+        "session-list": (client.list_sessions, {"items": [session]}),
+        "session-detail": (lambda: client.get_session("session-1"), session),
+        "comments": (lambda: client.list_comments("trace-1"), {"trace_id": "trace-1"}),
     }
     read, payload = reads[operation]
     open_request = Mock(return_value=BytesIO(json.dumps({"data": payload}).encode()))
@@ -2062,7 +2103,7 @@ def test_legacy_trace_reads_recheck_after_building_headers(
 
     monkeypatch.setattr(ObservabilityConfig, "build_headers", prepare_headers)
     try:
-        if flag == OFFLINE:
+        if flag == OFFLINE and operation != "comments":
             with pytest.raises(
                 ClientError, match="backend request skipped because offline mode"
             ):
@@ -2070,13 +2111,70 @@ def test_legacy_trace_reads_recheck_after_building_headers(
             open_request.assert_not_called()
         else:
             result = read()
-            trace_id = {
+            record_id = {
                 "list": lambda result: result.items[0].id,
                 "detail": lambda result: result.id,
                 "observations": lambda result: result.trace_id,
+                "session-list": lambda result: result.items[0].id,
+                "session-detail": lambda result: result.id,
+                "comments": lambda result: result.trace_id,
             }[operation](result)
-            assert trace_id == "trace-1"
+            assert record_id == (
+                "session-1" if operation.startswith("session") else "trace-1"
+            )
             open_request.assert_called_once()
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("session_id", (None, "session-1"), ids=("list", "detail"))
+def test_legacy_session_reads_keep_cached_offline_mode(monkeypatch, session_id):
+    from traigent.utils.exceptions import ClientError
+
+    client = _legacy_client(offline_mode=True)
+    open_request = Mock()
+    monkeypatch.setattr(client, "_open_http_request", open_request)
+    try:
+        with pytest.raises(ClientError, match=r"ObservabilityConfig.offline_mode=True"):
+            if session_id is None:
+                client.list_sessions()
+            else:
+                client.get_session(session_id)
+        open_request.assert_not_called()
+    finally:
+        client.close()
+
+
+def test_legacy_trace_read_offline_error_survives_concurrent_flag_unset(monkeypatch):
+    from traigent.observability import config as observability_config
+    from traigent.utils.exceptions import ClientError
+
+    client = _legacy_client()
+    open_request = Mock()
+    monkeypatch.setattr(client, "_open_http_request", open_request)
+    build_headers = ObservabilityConfig.build_headers
+
+    class UnsetAfterRead(dict):
+        def get(self, name, default=None):
+            value = super().get(name, default)
+            if name == OFFLINE and value is not None:
+                del self[name]
+            return value
+
+    environ = UnsetAfterRead({OFFLINE: "yes"})
+    monkeypatch.setattr(observability_config, "os", SimpleNamespace(environ=environ))
+
+    def prepare_headers(config):
+        headers = build_headers(config)
+        _flip(monkeypatch, OFFLINE)
+        return headers
+
+    monkeypatch.setattr(ObservabilityConfig, "build_headers", prepare_headers)
+    try:
+        with pytest.raises(ClientError, match=rf"{OFFLINE}=yes"):
+            client.get_trace("trace-1")
+        assert OFFLINE not in environ
+        open_request.assert_not_called()
     finally:
         client.close()
 
@@ -2164,44 +2262,76 @@ def test_legacy_batch_refused_by_validation(monkeypatch, flag):
 
 
 @pytest.mark.parametrize(
-    ("point", "flag"),
+    ("point", "flag", "clear_during_guard"),
     (
-        ("url", OPT_OUT),
-        ("url", OFFLINE),
-        ("async-entry", OFFLINE),
-        ("sync-entry", OFFLINE),
+        ("url", OPT_OUT, False),
+        ("url", OFFLINE, False),
+        ("async-entry", OFFLINE, False),
+        ("sync-entry", OFFLINE, False),
+        ("async-entry", OFFLINE, True),
+        ("sync-entry", OFFLINE, True),
     ),
 )
-def test_legacy_flush_preserves_validation_suppression(monkeypatch, point, flag):
+def test_legacy_flush_preserves_validation_suppression(
+    monkeypatch, point, flag, clear_during_guard
+):
     async def validate(url, **kwargs):
         if point == "url":
             _flip(monkeypatch, flag)
         return url
 
-    flip_on_policy_check = point == "async-entry"
-    may_send = auth.may_send_telemetry
-    sync_validate = auth.AuthManager._validate_api_key_with_backend_sync
+    flips = []
+    expected_site = []
+    if point != "url":
+        validator = {
+            "async-entry": auth.AuthManager._validate_api_key_with_backend,
+            "sync-entry": auth.AuthManager._validate_api_key_with_backend_sync,
+        }[point]
+        source, first_line = inspect.getsourcelines(validator)
+        entry_line = next(
+            line_number
+            for line_number, line in enumerate(source, first_line)
+            if "self._key_validation_egress_reason()" in line
+        )
+        site = (validator.__code__, entry_line)
+        expected_site.append(site)
+        reason_code = auth.AuthManager._key_validation_egress_reason.__code__
+        may_send = auth.may_send_telemetry
 
-    def policy_check():
-        nonlocal flip_on_policy_check
-        permitted = may_send()
-        if flip_on_policy_check:
-            flip_on_policy_check = False
-            _flip(monkeypatch, flag)
-        return permitted
+        def policy_check():
+            permitted = may_send()
+            caller = sys._getframe(1)
+            validator_frame = caller.f_back
+            if caller.f_code is reason_code and validator_frame is not None:
+                actual_site = (validator_frame.f_code, validator_frame.f_lineno)
+                if actual_site == site:
+                    assert permitted
+                    flips.append(actual_site)
+                    # The entry guard's decision was online, but the next check sees offline.
+                    _flip(monkeypatch, flag)
+            return permitted
 
-    def enter_sync_validator(*args, **kwargs):
-        nonlocal flip_on_policy_check
-        flip_on_policy_check = True
-        return sync_validate(*args, **kwargs)
-
-    monkeypatch.setattr(auth, "may_send_telemetry", policy_check)
+        monkeypatch.setattr(auth, "may_send_telemetry", policy_check)
     if point == "sync-entry":
         monkeypatch.setattr(auth, "AIOHTTP_AVAILABLE", False)
+
+    clears = []
+    if clear_during_guard:
+        from traigent.cloud import client as cloud_client
+        from traigent.utils import env_config
+
+        is_offline = env_config.is_backend_offline
+
+        def clear_after_offline_read():
+            offline = is_offline()
+            if offline:
+                monkeypatch.delenv(flag)
+                clears.append(offline)
+            return offline
+
+        monkeypatch.setattr(env_config, "is_backend_offline", clear_after_offline_read)
         monkeypatch.setattr(
-            auth.AuthManager,
-            "_validate_api_key_with_backend_sync",
-            enter_sync_validator,
+            cloud_client, "is_backend_offline", clear_after_offline_read
         )
 
     gate = optimization_only_egress
@@ -2211,7 +2341,7 @@ def test_legacy_flush_preserves_validation_suppression(monkeypatch, point, flag)
     def clear_after_validation(entry):
         status = wait_for_validation(entry)
         statuses.append(status)
-        monkeypatch.delenv(flag)
+        monkeypatch.delenv(flag, raising=not clear_during_guard)
         return status
 
     validation_post = Mock()
@@ -2232,7 +2362,8 @@ def test_legacy_flush_preserves_validation_suppression(monkeypatch, point, flag)
         result = client.flush()
         validation_post.assert_not_called()
         trace_post.assert_not_called()
-        assert not flip_on_policy_check
+        assert flips == expected_site
+        assert clears == ([True] if clear_during_guard else [])
         assert (result.items_sent, result.items_suppressed) == (0, 1)
         assert statuses == ["withheld"]
     finally:

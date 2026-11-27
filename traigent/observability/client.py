@@ -3620,7 +3620,7 @@ class ObservabilityClient:
             start_time_from=start_time_from,
             start_time_to=start_time_to,
         )
-        payload = self._request_json("GET", f"/traces{query}", trace_read=True)
+        payload = self._request_json("GET", f"/traces{query}")
         return TraceListResponse.from_dict(self._unwrap_data(payload, "trace list"))
 
     def iter_traces(
@@ -3669,7 +3669,6 @@ class ObservabilityClient:
         payload = self._request_json(
             "GET",
             f"/traces/{quote_path_segment(trace_id, field='trace_id')}",
-            trace_read=True,
         )
         return TraceRecord.from_dict(self._unwrap_data(payload, "trace detail"))
 
@@ -3677,7 +3676,6 @@ class ObservabilityClient:
         payload = self._request_json(
             "GET",
             f"/traces/{quote_path_segment(trace_id, field='trace_id')}/observations",
-            trace_read=True,
         )
         return TraceObservationsResponse.from_dict(
             self._unwrap_data(payload, "trace observations")
@@ -3916,8 +3914,6 @@ class ObservabilityClient:
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
-        *,
-        trace_read: bool = False,
     ) -> dict[str, Any]:
         with self._lock:
             if self._closed or self._close_pending:
@@ -3937,15 +3933,13 @@ class ObservabilityClient:
                 "Observability backend request skipped: no credential resolved "
                 "(set TRAIGENT_API_KEY or run `traigent auth login`)"
             )
-        return self._request_json_sync(method, path, payload, trace_read=trace_read)
+        return self._request_json_sync(method, path, payload)
 
     def _request_json_sync(
         self,
         method: str,
         path: str,
         payload: dict[str, Any] | None = None,
-        *,
-        trace_read: bool = False,
     ) -> dict[str, Any]:
         encoded_payload = None
         if payload is not None:
@@ -3957,10 +3951,16 @@ class ObservabilityClient:
             headers=self.config.build_headers(),
             method=method,
         )
-        if trace_read and is_backend_offline():
-            # Live recheck after request prep: offline mode may have flipped.
-            self._log_offline_mode_once()
-            raise _offline_request_error()
+        # Check the trace and session read routes after request preparation.
+        match method, path.partition("?")[0].split("/"):
+            case (
+                "GET",
+                ["", "traces" | "sessions"]
+                | ["", "traces" | "sessions", _]
+                | ["", "traces", _, "observations"],
+            ) if self.config.offline_mode or is_backend_offline():
+                self._log_offline_mode_once()
+                raise _offline_request_error()
         try:
             with self._open_http_request(http_request) as response:
                 status_code = getattr(response, "status", 200)
