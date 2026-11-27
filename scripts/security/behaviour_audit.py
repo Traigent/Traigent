@@ -544,6 +544,9 @@ def resolve_litellm_pricing_url(
     """
     env = {k: v for k, v in workload_env.items() if k != _PRICING_ENV}
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+    # The probe must not write into the workload's bytecode cache.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env.pop("PYTHONPYCACHEPREFIX", None)
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
             [python or sys.executable, "-c", _PRICING_URL_PROBE],
@@ -818,18 +821,16 @@ def child_env(
             )
         env[_PRICING_ENV] = pricing_url
     # Loopback (the backend stub, the pricing listener) must bypass proxies.
-    # Append to any existing value; keep both spellings identical.
-    if "*" in (env.get("NO_PROXY"), env.get("no_proxy")):
-        return env  # already bypasses everything; appending would break it
-    entries: list[str] = []
+    # Each spelling is handled on its own: append to its value unless that
+    # value is exactly "*" (appending would break the wildcard for urllib).
     for name in ("NO_PROXY", "no_proxy"):
-        for item in env.get(name, "").split(","):
-            item = item.strip()
-            if item and item not in entries:
-                entries.append(item)
-    if "127.0.0.1" not in entries:
-        entries.append("127.0.0.1")
-    env["NO_PROXY"] = env["no_proxy"] = ",".join(entries)
+        current = env.get(name, "").strip()
+        if current == "*":
+            continue
+        entries = [item.strip() for item in current.split(",") if item.strip()]
+        if "127.0.0.1" not in entries:
+            entries.append("127.0.0.1")
+        env[name] = ",".join(entries)
     return env
 
 
