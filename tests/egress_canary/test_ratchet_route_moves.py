@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from . import pins, test_egress_ratchet
+from .canaries import Leak
 from .pins import Identity, ratchet_problems
+from .scenario import ScenarioResult
 
 OLD = "POST /r/old"
 NEW = "POST /r/new"
@@ -136,6 +138,64 @@ def check_manifest(
 
 
 @pytest.mark.usefixtures("declared_move")
+def test_move_one_leak_and_remove_another_on_the_same_route(monkeypatch):
+    old, new = at(OLD), at(NEW)
+    fixed = at(OLD, field_path="$.y")
+    dispositions = [entry(old, moved_to=NEW), entry(fixed)]
+
+    assert problems({new}, {old, fixed}, {new}, dispositions) == []
+    check_manifest(monkeypatch, {old, fixed}, {new}, dispositions)
+
+
+@pytest.mark.usefixtures("declared_move")
+def test_plain_removal_on_the_wrong_route_is_rejected(monkeypatch):
+    old, new = at(OLD), at(NEW)
+    fixed = at(OLD, field_path="$.y")
+    wrong_route = at(NEW, field_path="$.y")
+    dispositions = [entry(old, moved_to=NEW), entry(wrong_route)]
+
+    with pytest.raises(
+        AssertionError, match="every identity removed from the register"
+    ):
+        check_manifest(monkeypatch, {old, fixed}, {new}, dispositions)
+
+
+@pytest.mark.parametrize("declared", [True, False], ids=["declared", "undeclared"])
+def test_legacy_baseline_checks_the_route_move(monkeypatch, declared):
+    agent = Leak(NEW, "body.value", "agent_name", "raw", "$.name")
+    other_leaks = [
+        Leak(OTHER, "body.value", "evaluation_set", "raw", "$.eval"),
+        Leak(OTHER, "body.value", "evaluator_id", "raw", "$.evaluator"),
+    ]
+    old = (OLD, *agent.identity[1:])
+    monkeypatch.setattr(pins, "ROUTE_MOVES", {OLD: NEW} if declared else {})
+    monkeypatch.setattr(
+        test_egress_ratchet, "BASELINE", {old, *(leak.identity for leak in other_leaks)}
+    )
+    monkeypatch.setattr(
+        test_egress_ratchet, "load_dispositions", lambda: [entry(old, moved_to=NEW)]
+    )
+    scenario = ScenarioResult(
+        requests=[],
+        guard_violations=[],
+        unhandled_routes=[],
+        optimization_error=None,
+        result_source=None,
+        leaks=[agent, *other_leaks],
+    )
+
+    if declared:
+        test_egress_ratchet.test_legacy_default_run_leaks_stay_inside_the_baseline(
+            scenario
+        )
+    else:
+        with pytest.raises(AssertionError, match="legacy shape grew leaks"):
+            test_egress_ratchet.test_legacy_default_run_leaks_stay_inside_the_baseline(
+                scenario
+            )
+
+
+@pytest.mark.usefixtures("declared_move")
 def test_later_removal_from_the_moved_route_passes(monkeypatch):
     old, new = at(OLD), at(NEW)
     history = [entry(old, moved_to=NEW)]
@@ -158,15 +218,32 @@ def test_later_declared_move_from_the_moved_route_passes(monkeypatch):
     check_manifest(monkeypatch, {old}, {third}, dispositions)
 
 
+@pytest.mark.usefixtures("declared_move")
+def test_move_chain_stops_at_each_identitys_last_disposition(monkeypatch):
+    old, new, third = at(OLD), at(NEW), at(THIRD)
+    other_old = at(OLD, field_path="$.y")
+    other_new = at(NEW, field_path="$.y")
+    monkeypatch.setitem(pins.ROUTE_MOVES, NEW, THIRD)
+    dispositions = [
+        entry(old, moved_to=NEW),
+        entry(new, moved_to=THIRD),
+        entry(other_old, moved_to=NEW),
+        entry(other_new),
+    ]
+
+    check_manifest(monkeypatch, {old, other_old}, {third}, dispositions)
+
+
 def test_route_move_cycle_raises(monkeypatch):
     monkeypatch.setattr(pins, "ROUTE_MOVES", {OLD: NEW, NEW: OLD})
     with pytest.raises(ValueError, match="cycle in ROUTE_MOVES"):
-        pins.register_additions({at(OLD)}, {at(OLD)})
+        pins.effective_baseline({at(OLD)}, [])
 
 
 def test_empty_route_moves_preserve_the_checked_in_baseline(monkeypatch):
+    dispositions = [row for row in pins.load_dispositions() if "moved_to" not in row]
     monkeypatch.setattr(pins, "ROUTE_MOVES", {})
-    assert pins.effective_baseline(pins.BASELINE) == pins.BASELINE
+    assert pins.effective_baseline(pins.BASELINE, dispositions) == pins.BASELINE
 
 
 @pytest.mark.usefixtures("declared_move")
@@ -179,7 +256,9 @@ def test_stale_plain_disposition_is_rejected(monkeypatch):
 
 @pytest.mark.usefixtures("declared_move")
 def test_manifest_still_requires_the_move_disposition(monkeypatch):
-    with pytest.raises(AssertionError, match=r"missing: .*POST /r/old"):
+    with pytest.raises(
+        AssertionError, match=r"register may only shrink: .*POST /r/new"
+    ):
         check_manifest(monkeypatch, {at(OLD)}, {at(NEW)}, [])
 
 

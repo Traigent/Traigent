@@ -42,9 +42,11 @@ BASELINE, REGISTER = load_manifest()
 ROUTE_MOVES: dict[str, str] = {}
 
 
-def effective_baseline(baseline: set[Identity]) -> set[Identity]:
-    """Carry baseline identities to the last route in each declared move chain."""
-    destinations: dict[str, str] = {}
+def effective_baseline(
+    baseline: set[Identity], dispositions: list[dict[str, str]]
+) -> set[Identity]:
+    """Carry each baseline identity through its matching declared move dispositions."""
+    # Reject route cycles even when no disposition uses them.
     for source in ROUTE_MOVES:
         route = source
         visited: set[str] = set()
@@ -53,18 +55,21 @@ def effective_baseline(baseline: set[Identity]) -> set[Identity]:
                 raise ValueError(f"cycle in ROUTE_MOVES at {route!r}")
             visited.add(route)
             route = ROUTE_MOVES[route]
-        destinations[source] = route
-    return {
-        (destinations.get(route, route), location, field_path, kind)
-        for route, location, field_path, kind in baseline
-    }
 
+    moves: dict[Identity, str] = {}
+    for entry in dispositions:
+        route = entry["route"]
+        destination = ROUTE_MOVES.get(route)
+        if destination is not None and entry.get("moved_to") == destination:
+            identity = (route, entry["location"], entry["field_path"], entry["kind"])
+            moves[identity] = destination
 
-def register_additions(
-    baseline: set[Identity], register: set[Identity]
-) -> set[Identity]:
-    """Return registered identities outside the effective baseline."""
-    return register - effective_baseline(baseline)
+    effective: set[Identity] = set()
+    for identity in baseline:
+        while identity in moves:
+            identity = (moves[identity], *identity[1:])
+        effective.add(identity)
+    return effective
 
 
 #: The 43 (route, kind) pairs measured before the coverage expansion (default

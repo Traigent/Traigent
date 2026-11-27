@@ -24,7 +24,6 @@ from .pins import (
     load_dispositions,
     ratchet_problems,
     reference_problem,
-    register_additions,
 )
 from .scenario import ScenarioResult, run_scenario
 
@@ -154,10 +153,10 @@ def test_removed_leaks_need_a_disposition(scenario: ScenarioResult) -> None:
 
 
 def test_manifest_and_dispositions_are_consistent() -> None:
-    additions = register_additions(BASELINE, REGISTER)
-    assert not additions, f"register may only shrink: {_fmt(additions)}"
-    baseline = effective_baseline(BASELINE)
     dispositions = load_dispositions()
+    baseline = effective_baseline(BASELINE, dispositions)
+    additions = REGISTER - baseline
+    assert not additions, f"register may only shrink: {_fmt(additions)}"
     disposed = set()
     move_sources = set()
     move_targets = set()
@@ -274,7 +273,8 @@ def test_legacy_default_run_leaks_stay_inside_the_baseline(
     """Opt-in off keeps the legacy request: its leaks are all known (baseline) identities."""
 
     assert legacy_scenario.optimization_error is None
-    unknown = distinct_identities(legacy_scenario.leaks) - BASELINE
+    baseline = effective_baseline(BASELINE, load_dispositions())
+    unknown = distinct_identities(legacy_scenario.leaks) - baseline
     assert not unknown, f"legacy shape grew leaks:\n{_fmt(unknown)}"
     # and it still carries the G1 fields the content-less path drops
     kinds = {leak.kind for leak in legacy_scenario.leaks}
