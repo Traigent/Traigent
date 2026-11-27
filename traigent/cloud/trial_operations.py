@@ -1449,7 +1449,7 @@ class TrialOperations:
                     await asyncio.sleep(delay)
                 raise AssertionError("unreachable: last attempt always returns")
 
-        except _TelemetryAuthSuppressed:
+        except _TelemetryAuthSuppressed:  # silent-ok: telemetry opt-out or offline withheld this analytics submission; returning None is its existing not-sent result
             return None
         except Exception as exc:
             if is_backend_offline():

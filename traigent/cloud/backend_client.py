@@ -3456,7 +3456,7 @@ class BackendIntegratedClient:
         validation = _telemetry_key_validation.set(True)
         try:
             headers = self._get_sync_auth_headers(target="backend")
-        except _TelemetryAuthSuppressed:
+        except _TelemetryAuthSuppressed:  # silent-ok: telemetry opt-out or offline withheld this upload; returning False is the uploader's existing not-sent result
             return False
         except AuthenticationError as exc:
             logger.debug(
