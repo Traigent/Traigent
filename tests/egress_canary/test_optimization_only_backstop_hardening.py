@@ -244,9 +244,27 @@ def test_redirects_are_not_followed_and_a_3xx_is_a_local_refusal_while_active(
         assert seen["requests"]["allow_redirects"] is False
         assert seen["httpx"]["follow_redirects"] is False
     else:
-        assert "allow_redirects" not in seen["aiohttp"]
+        # Inactive but CREDENTIALED: aiohttp still gets allow_redirects=False so the
+        # credential cannot be replayed to a redirect target; requests and httpx are
+        # untouched. The 3xx passes through (no local refusal).
+        assert seen["aiohttp"]["allow_redirects"] is False
         assert "allow_redirects" not in seen["requests"]
         assert "follow_redirects" not in seen["httpx"]
+
+
+def test_inactive_credential_free_aiohttp_request_keeps_its_kwargs() -> None:
+    from traigent.labels import transport_gate as gate
+
+    seen: dict[str, dict[str, Any]] = {}
+
+    class AioBase:
+        async def _request(self, method: Any, url: Any, **kw: Any) -> Any:
+            seen["aiohttp"] = kw
+            return _Resp(302)
+
+    aio = gate._build_aiohttp(AioBase)()
+    asyncio.run(aio._request("GET", f"{API}/sessions/s1"))
+    assert "allow_redirects" not in seen["aiohttp"]
 
 
 # ------------------------------------------------------ C: survives the gate-off setting

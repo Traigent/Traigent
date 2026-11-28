@@ -433,20 +433,56 @@ def _assert_old_state_only(auth: Any) -> None:
     assert tm._refresh_token_secure.get_value() == OLD_REFRESH
 
 
-def test_jwt_refresh_on_flagged_manager_that_cannot_latch_keeps_old_state(
+def test_jwt_refresh_on_flagged_manager_that_cannot_latch_drops_old_state_and_emits_nothing(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    # The server already consumed the old refresh token, so a failed latch must not
+    # keep it (it would be resent): the manager invalidates its refresh state, and the
+    # new JWT is never emitted.
+    from traigent.cloud.auth import AuthStatus, InvalidCredentialsError
+
     auth = _flagged_manager()
     _refresh_ready(auth, monkeypatch)
-    real_latch_on = oo.latch_on
     monkeypatch.setattr(oo, "latch_on", _boom)
     result = asyncio.run(auth._token_manager.refresh_jwt_secure(OLD_REFRESH))
     assert result.success is False
-    monkeypatch.setattr(oo, "latch_on", real_latch_on)  # reads latch; inspect old state
-    _assert_old_state_only(auth)
-    monkeypatch.setattr(oo, "latch_on", _boom)
-    with pytest.raises(oo.OptimizationOnlyRefusal):
-        asyncio.run(auth.get_auth_headers())
+    assert result.credentials is None
+    assert not result.headers
+    # The old tokens are NOT kept (they were consumed server-side): gone everywhere.
+    assert auth._credentials is None
+    assert auth._auth_status == AuthStatus.INVALID
+    assert auth._token_manager._refresh_token_secure is None
+    assert auth._token_manager.get_authorization_header() == {}
+    # Control: re-authentication can find a key in two places: the copy AuthManager took
+    # of TRAIGENT_API_KEY at construction, and the env var the credential resolver
+    # re-reads. Clear both (set_api_key(None) drops the provided credentials and key
+    # token; delenv drops the env fallback), so re-authentication has nothing to
+    # authenticate with and must not be able to send a request.
+    monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+    # Hermetic: no stored CLI key or development key on this machine can feed re-auth.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+        staticmethod(lambda *_a, **_k: None),
+    )
+    monkeypatch.setattr(
+        "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+        staticmethod(lambda *_a, **_k: None),
+    )
+    auth.set_api_key(None)
+    assert auth._provided_credentials is None
+    with capture_egress() as cap:
+        with pytest.raises(InvalidCredentialsError) as excinfo:
+            asyncio.run(auth.get_auth_headers())
+    assert cap.requests == []  # no /keys/validate or any other auth request
+    # Pin the cause: the refusal comes from re-authentication having no credentials,
+    # not from some unrelated failure.
+    assert auth._last_auth_result.error_message == "No credentials provided"
+    assert "No credentials provided" in str(excinfo.value)
+    for secret in (NEW_JWT, OLD_JWT, OLD_REFRESH, "refresh-new-0123456789"):
+        assert secret not in repr(excinfo.value)
+        assert secret not in (result.error_message or "")
 
 
 def test_jwt_refresh_on_unflagged_manager_ignores_latch_failure(

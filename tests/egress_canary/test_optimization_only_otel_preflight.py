@@ -22,6 +22,19 @@ from .test_optimization_only_egress import _env
 
 pytestmark = pytest.mark.backend_online
 
+
+@pytest.fixture
+def require_otlp_http_exporter() -> None:
+    """Fail (never skip) when the exporter extra is missing, only for tests that use it."""
+    try:
+        import opentelemetry.exporter.otlp.proto.http  # noqa: F401
+    except ImportError:
+        pytest.fail(
+            "opentelemetry-exporter-otlp-proto-http is not installed; "
+            "install the 'tracing' extra (pip install 'traigent[tracing]')"
+        )
+
+
 OTLP_BASE = f"{BACKEND_URL}/api/v1beta/observability/otlp"
 RESTRICTED = {"valid": True, "optimization_only": True}
 
@@ -618,8 +631,15 @@ def _real_core_tracer(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Embedded core tracing with the REAL SDK provider/BatchSpanProcessor/OTLP exporter."""
     from traigent.core import tracing
 
-    if getattr(tracing, "_PLUGIN_AVAILABLE", False) or not tracing.OTEL_AVAILABLE:
-        pytest.skip("embedded tracing with real OpenTelemetry SDK not available")
+    if getattr(tracing, "_PLUGIN_AVAILABLE", False):
+        pytest.skip("traigent-tracing plugin installed")
+    if not tracing.OTEL_AVAILABLE:
+        # Missing SDK or OTLP http exporter: fail loudly, never skip a privacy test.
+        pytest.fail(
+            "embedded tracing needs the OpenTelemetry SDK and "
+            "opentelemetry-exporter-otlp-proto-http; install the 'tracing' extra "
+            "(pip install 'traigent[tracing]')"
+        )
     for name, value in {
         "TRACING_ENABLED": True,
         "_initialized": False,
@@ -1368,7 +1388,9 @@ def _assert_no_cred_logged(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_gate_exporter_construction_never_logs_the_credential(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    require_otlp_http_exporter: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     import logging
 
@@ -1436,7 +1458,9 @@ _CRLF_HEADERS = f"authorization=Bearer%20{_SYNTH_CRED}%0Amalformed"
 
 
 def test_control_char_header_is_rejected_without_exporter(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    require_otlp_http_exporter: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     import logging
 
