@@ -41,15 +41,17 @@ export TRAIGENT_OFFLINE_MODE=true
 ```
 
 **Residual risk — import order.** If the application imports `litellm` *before*
-`traigent`, litellm fetches its price table at its own import, before the SDK
-can set any default [R: workload `import_litellm_first`]. Only the environment
-variable set before the process starts prevents that; the SDK's own default
-pin cannot, because it only runs when `traigent/__init__.py` first executes,
-which is already too late. The egress test keeps this as a strict xfail
+`traigent`, litellm by default fetches its price table at its own import,
+before the SDK can set any default [R: workload `import_litellm_first`]. Setting
+`LITELLM_LOCAL_MODEL_COST_MAP=True` before the process starts, or in code before
+the first `litellm` import, is one way to prevent that; the SDK's own default pin cannot, because it
+only runs when `traigent/__init__.py` first executes, which is already too
+late. The egress test keeps this as a strict xfail
 (`test_litellm_imported_first_reaches_no_third_party_host`).
 
-**What happens when the network is blocked.** In `docker run --network none`
-every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
+With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. It can exit with status 134 (observed intermittently; in one run of 10 fresh processes, 10 of 10 did). To reproduce, with the two LiteLLM variables unset, start a fresh Python process for each of 10 iterations of `import litellm` in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check each exit status. In the same setup, importing `traigent` first with default settings, and setting `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import, each gave 0 aborts in 10 runs. litellm accepts only `true` (any case) for these two variables, so `1` or `yes` do not count, and importing `traigent` first does not replace such a value.
+
+**What happens when the network is blocked.** In the recorder runs described here (litellm 1.98.0, `docker run --network none`), every workload completed [R]. A refused DNS lookup costs litellm
 well under a second (default vs pinned `optimize_mock`: 11.9 s vs 11.3/11.7 s),
 so the 5 s litellm timeout was not observed; it would apply only where a
 firewall silently *drops* packets — unmeasured. The Hugging Face path is
@@ -64,7 +66,7 @@ different: 8 attempts and about 22 s added (32.5 s vs 10.3 s with
 | Keyless quickstart (`traigent quickstart`) | no external host | no external host |
 | `@traigent.optimize`, mock LLM, dummy key, loopback stub backend | no external host (default pin, `--pins` not needed) [R]; `raw.githubusercontent.com:443` only if `TRAIGENT_LITELLM_LIVE_PRICES=1` | stub only |
 | Same, `injection_mode="seamless"` | same as above | stub only |
-| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` (residual — see above; pins/opt-out cannot help here) | stub only |
+| `import litellm` before `import traigent` | `raw.githubusercontent.com:443` (residual — see above; Traigent's default settings are applied too late to prevent this fetch) | stub only |
 | Llama token count (`calculate_prompt_cost`) | no external host (fixed: no longer downloads a tokenizer to count tokens) [R] | none |
 | Mock run with built-in backend, production policy | `portal.traigent.ai` only (the `raw.githubusercontent.com` contact this row used to show is gone with the default pin) [R] | `portal.traigent.ai` only |
 

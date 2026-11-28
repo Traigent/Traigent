@@ -14,6 +14,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Since 0.34.0, running the keyless quickstart inside CI requires the same approval as any other run: set `TRAIGENT_RUN_APPROVED=1` (optionally `TRAIGENT_APPROVED_BY`). 0.34.0 shipped this change without a note.
 
+### Known issues
+
+- With litellm 1.111.0, importing `litellm` before `traigent` on a host without network access can make the process exit non-zero. It can exit with status 134 (observed intermittently; in one run of 10 fresh processes, 10 of 10 did). To reproduce, with the two LiteLLM variables unset, start a fresh Python process for each of 10 iterations of `import litellm` in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check each exit status. In the same setup, importing `traigent` first with default settings, and setting `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import, each gave 0 aborts in 10 runs. litellm accepts only `true` (any case) for these two variables, so `1` or `yes` do not count, and importing `traigent` first does not replace such a value.
+
 ## [0.34.2] - 2026-11-24
 
 ### Breaking
