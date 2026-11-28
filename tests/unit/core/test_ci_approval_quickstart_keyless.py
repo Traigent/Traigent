@@ -21,13 +21,30 @@ from tests.integration.test_quickstart_smoke import _SITECUSTOMIZE_SRC
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# The blocker prints this marker to stderr when sitecustomize runs, so the
-# parent can prove the network blocker was loaded in the child interpreter.
+# The blocker prints this marker to stderr only after a child-side self-check
+# proves the guard works: IPv4 and IPv6 socket creation must both raise the
+# guard's NETWORK_BLOCKED error. If the guard is absent, no marker is printed.
 _BLOCKER_MARKER = "CI_APPROVAL_NETWORK_BLOCKER_LOADED"
-_BLOCKER_SRC = (
-    _SITECUSTOMIZE_SRC
-    + f'\nimport sys as _sys\n_sys.stderr.write("{_BLOCKER_MARKER}\\n")\n'
-)
+_BLOCKER_SELF_CHECK = f"""
+import socket as _probe_socket
+import sys as _probe_sys
+
+_probe_ok = True
+for _probe_family in (_probe_socket.AF_INET, _probe_socket.AF_INET6):
+    try:
+        _probe_sock = _probe_socket.socket(_probe_family)
+    except RuntimeError as _probe_exc:
+        if "NETWORK_BLOCKED" not in str(_probe_exc):
+            _probe_ok = False
+    except OSError:
+        _probe_ok = False
+    else:
+        _probe_sock.close()
+        _probe_ok = False
+if _probe_ok:
+    _probe_sys.stderr.write("{_BLOCKER_MARKER}\\n")
+"""
+_BLOCKER_SRC = _SITECUSTOMIZE_SRC + _BLOCKER_SELF_CHECK
 
 
 def _run_quickstart(extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
