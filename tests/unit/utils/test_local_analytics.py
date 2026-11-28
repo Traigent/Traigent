@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -21,7 +22,11 @@ from traigent._version import get_version
 from traigent.api.types import OptimizationStatus
 from traigent.config.backend_config import DEFAULT_CLOUD_URL
 from traigent.config.types import ExecutionMode, TraigentConfig
-from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
+from traigent.storage.local_storage import (
+    LocalStorageManager,
+    OptimizationSession,
+    TrialResult,
+)
 from traigent.utils.local_analytics import (
     DEFAULT_ANALYTICS_ENDPOINT,
     LocalAnalytics,
@@ -365,20 +370,22 @@ class TestCollectUsageStats:
                 status=OptimizationStatus.COMPLETED.value,
                 total_trials=10,
                 completed_trials=10,
+                baseline_score=1.0,
+                best_score=1.25,
+                trials=[
+                    TrialResult(
+                        trial_id=1, config={}, score=1.25, timestamp="2026-01-01"
+                    )
+                ],
             ),
         ]
 
         with patch.object(
             analytics_instance.storage, "list_sessions", return_value=sessions
         ):
-            with patch.object(
-                analytics_instance.storage,
-                "get_session_summary",
-                return_value={"improvement": 0.25},
-            ):
-                stats = analytics_instance.collect_usage_stats()
+            stats = analytics_instance.collect_usage_stats()
 
-                assert abs(stats["avg_improvement_percent"] - 25.0) < 0.01
+            assert abs(stats["avg_improvement_percent"] - 25.0) < 0.01
 
     def test_collect_usage_stats_recent_sessions(
         self, analytics_instance: LocalAnalytics
@@ -1206,9 +1213,7 @@ class TestEdgeCases:
 
         with patch.object(analytics.storage, "list_sessions", return_value=sessions):
             with patch.object(
-                analytics.storage,
-                "get_session_summary",
-                return_value={"improvement": "not-a-number"},
+                analytics, "_session_improvement", return_value="not-a-number"
             ):
                 stats = analytics.collect_usage_stats()
 
@@ -1239,11 +1244,7 @@ class TestEdgeCases:
         ]
 
         with patch.object(analytics.storage, "list_sessions", return_value=sessions):
-            with patch.object(
-                analytics.storage,
-                "get_session_summary",
-                return_value={"improvement": None},
-            ):
+            with patch.object(analytics, "_session_improvement", return_value=None):
                 stats = analytics.collect_usage_stats()
 
                 # Should handle None gracefully
@@ -1314,3 +1315,359 @@ class TestEdgeCases:
 
                 # Should handle missing config gracefully
                 assert abs(stats["avg_config_space_size"] - 0.0) < 0.01
+
+
+class TestSubmitDoesNotStallEventLoop:
+    """The orchestrator wraps submit_usage_stats in wait_for(timeout=10)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_collector_slot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An abandoned collector from an earlier test must not block this one.
+        import traigent.utils.local_analytics as module
+
+        leftover = module._COLLECTOR_THREAD
+        if leftover is not None:
+            leftover.join(timeout=2.5)
+        monkeypatch.setattr("traigent.utils.local_analytics._COLLECTOR_THREAD", None)
+        monkeypatch.setattr(
+            "traigent.utils.local_analytics._COLLECTOR_DONE", None, raising=False
+        )
+
+    @staticmethod
+    def _config(path: str) -> TraigentConfig:
+        return TraigentConfig(
+            execution_mode=ExecutionMode.LOCAL.value,
+            enable_usage_analytics=True,
+            local_storage_path=path,
+            anonymous_user_id="anon-test",
+        )
+
+    @staticmethod
+    def _write_sessions(path: str, count: int) -> None:
+        import json
+
+        storage = LocalStorageManager(path)
+        sid = storage.create_session("fn", {"configuration_space": {"a": [1, 2]}}, {})
+        session_file = storage.storage_path / "sessions" / f"{sid}.json"
+        template = json.loads(session_file.read_text())
+        session_file.unlink()
+        template["status"] = "completed"
+        template["completed_trials"] = 5
+        for i in range(count):
+            template["session_id"] = f"s{i:07d}"
+            (storage.storage_path / "sessions" / f"s{i:07d}.json").write_text(
+                json.dumps(template)
+            )
+
+    def test_wait_for_timeout_fires_with_many_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import importlib
+        import time
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        store = str(tmp_path / "store")
+        total = 100
+        self._write_sessions(store, total)
+        analytics = LocalAnalytics(self._config(store))
+        timeout = 0.5
+        # Keep the worker budget below the cap so executor shutdown is quick.
+        monkeypatch.setattr(
+            "traigent.utils.local_analytics._SUBMIT_SCAN_BUDGET_SECONDS",
+            0.3,
+            raising=False,
+        )
+        reads: list[str] = []
+        real_load = LocalStorageManager.load_session
+
+        def slow_load(self_: LocalStorageManager, session_id: str):
+            reads.append(session_id)
+            time.sleep(0.05)
+            return real_load(self_, session_id)
+
+        monkeypatch.setattr(LocalStorageManager, "load_session", slow_load)
+
+        def no_transport(**_: Any) -> Any:
+            raise RuntimeError("transport stubbed")
+
+        monkeypatch.setattr(
+            importlib.import_module("traigent.cloud.backend_client"),
+            "get_backend_client",
+            no_transport,
+        )
+
+        results: list[dict[str, Any]] = []
+
+        async def run() -> None:
+            try:
+                results.append(
+                    await asyncio.wait_for(
+                        analytics.submit_usage_stats(), timeout=timeout
+                    )
+                )
+            except TimeoutError:
+                pass
+
+        start = time.monotonic()
+        # asyncio.run joins the default executor, so thread shutdown is timed too.
+        with (
+            patch(
+                "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+            ),
+            patch(
+                "traigent.utils.local_analytics.usage_analytics_allowed",
+                return_value=True,
+            ),
+        ):
+            asyncio.run(run())
+        elapsed = time.monotonic() - start
+        assert elapsed < timeout + 0.5
+        assert 0 < len(reads) < total
+        # The scan really ran: the call got past every eligibility refusal.
+        for result in results:
+            assert result.get("reason") not in {
+                "Analytics disabled",
+                "No API key available",
+                "API key invalid",
+                "No stats to submit",
+            }
+
+    def test_slow_collector_cannot_delay_asyncio_run_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A collector step with no deadline check must not be joined at exit."""
+        import asyncio
+        import time
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        calls: list[int] = []
+
+        def slow_collect(self_: Any, *a: Any, **k: Any) -> dict[str, Any]:
+            calls.append(1)
+            time.sleep(2.0)
+            return {"total_sessions": 1}
+
+        monkeypatch.setattr(LocalAnalytics, "collect_usage_stats", slow_collect)
+
+        async def run() -> None:
+            try:
+                await asyncio.wait_for(analytics.submit_usage_stats(), timeout=0.3)
+            except TimeoutError:
+                pass
+
+        start = time.monotonic()
+        with (
+            patch(
+                "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+            ),
+            patch(
+                "traigent.utils.local_analytics.usage_analytics_allowed",
+                return_value=True,
+            ),
+        ):
+            asyncio.run(run())
+        assert calls  # the collector really ran, so no early refusal passed this
+        assert time.monotonic() - start < 1.0
+
+    def test_no_api_key_never_lists_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("TRAIGENT_API_KEY", raising=False)
+        monkeypatch.delenv("OPTIGEN_API_KEY", raising=False)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        with patch(
+            "traigent.utils.local_analytics.may_send_telemetry", return_value=True
+        ):
+            with (
+                patch(
+                    "traigent.utils.local_analytics.usage_analytics_allowed",
+                    return_value=True,
+                ),
+                patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value=None,
+                ),
+                patch.object(analytics.storage, "list_sessions") as listed,
+                patch.object(analytics.storage, "load_session") as loaded,
+            ):
+                result = asyncio.run(analytics.submit_usage_stats())
+        assert result["success"] is False
+        listed.assert_not_called()
+        loaded.assert_not_called()
+
+    def test_days_since_first_use_comes_from_stored_timestamp(
+        self, tmp_path: Path
+    ) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        stored = datetime.now(UTC) - timedelta(days=12, hours=1)
+        (Path(analytics.storage.storage_path) / ".first_use").write_text(
+            stored.isoformat()
+        )
+        with patch.object(analytics.storage, "list_sessions") as listed:
+            assert analytics._get_days_since_first_use() == 12
+        listed.assert_not_called()
+
+    def test_first_use_is_stored_when_missing(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        created = (datetime.now(UTC) - timedelta(days=5, hours=1)).isoformat()
+        session = OptimizationSession(
+            session_id="s1",
+            function_name="fn",
+            created_at=created,
+            updated_at=created,
+            status="completed",
+            total_trials=1,
+            completed_trials=1,
+            optimization_config={},
+            trials=[],
+        )
+        with patch.object(analytics.storage, "list_sessions", return_value=[session]):
+            assert analytics._get_days_since_first_use() == 5
+        with patch.object(analytics.storage, "list_sessions") as listed:
+            assert analytics._get_days_since_first_use() == 5
+        listed.assert_not_called()
+
+    def test_first_use_from_session_ids_persists_when_truncated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        monkeypatch.setattr(
+            LocalStorageManager,
+            "load_session",
+            lambda self_, sid: time.sleep(0.1),
+        )
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        sessions_dir = Path(analytics.storage.storage_path) / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        old = datetime.now(UTC) - timedelta(days=40, hours=1)
+        for stamp in (old, datetime.now(UTC)):
+            name = stamp.strftime("%Y%m%d_%H%M%S_%f") + "_fn_abcd1234"
+            (sessions_dir / f"{name}.json").write_text("{}")
+        stats = analytics.collect_usage_stats(time_budget=0.03)
+        assert stats["total_sessions"] == 2
+        assert stats["days_since_first_use"] == 40
+        assert (Path(analytics.storage.storage_path) / ".first_use").exists()
+
+    def test_first_use_write_refuses_symlink(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        target = tmp_path / "elsewhere"
+        target.write_text("keep")
+        (Path(analytics.storage.storage_path) / ".first_use").symlink_to(target)
+        analytics._write_first_use(datetime.now(UTC))
+        assert target.read_text() == "keep"
+
+    def test_first_use_not_persisted_when_cut_with_unparseable_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time
+
+        monkeypatch.setattr(
+            LocalStorageManager, "load_session", lambda self_, sid: time.sleep(0.1)
+        )
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        sessions_dir = Path(analytics.storage.storage_path) / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
+        for name in (f"{stamp}_fn_abcd1234", "custom-id-1", "custom-id-2"):
+            (sessions_dir / f"{name}.json").write_text("{}")
+        analytics.collect_usage_stats(time_budget=0.03)
+        assert not (Path(analytics.storage.storage_path) / ".first_use").exists()
+
+    def test_stalled_collector_is_not_joined_by_new_threads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import threading
+
+        import traigent.utils.local_analytics as module
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        monkeypatch.setattr(module, "_COLLECTOR_THREAD", None)
+        monkeypatch.setattr(module, "_COLLECTOR_DONE", None, raising=False)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        release = threading.Event()
+        started: list[int] = []
+
+        def blocked(self_: Any, *a: Any, **k: Any) -> dict[str, Any]:
+            started.append(1)
+            release.wait(10)
+            return {}
+
+        monkeypatch.setattr(LocalAnalytics, "collect_usage_stats", blocked)
+        monkeypatch.setattr(module, "_SUBMIT_SCAN_BUDGET_SECONDS", 0.1)
+        monkeypatch.setattr(module, "_SUBMIT_SCAN_MARGIN_SECONDS", 0.1)
+
+        async def go() -> list[dict[str, Any]]:
+            return [
+                await analytics.submit_usage_stats(),
+                await analytics.submit_usage_stats(),
+            ]
+
+        try:
+            with (
+                patch.object(module, "may_send_telemetry", return_value=True),
+                patch.object(module, "usage_analytics_allowed", return_value=True),
+            ):
+                first, second = asyncio.run(go())
+        finally:
+            release.set()
+        assert first["reason"] == second["reason"] == "Request timeout"
+        assert len(started) == 1
+
+    def test_scandir_oserror_marks_listing_incomplete(self, tmp_path: Path) -> None:
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        with patch("os.scandir", side_effect=OSError("boom")):
+            assert analytics._scan_sessions(1.0)["enumerated_fully"] is False
+
+    def test_slot_is_occupied_between_assignment_and_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import threading
+
+        import traigent.utils.local_analytics as module
+
+        monkeypatch.setenv("TRAIGENT_API_KEY", "k" * 40)
+        analytics = LocalAnalytics(self._config(str(tmp_path / "store")))
+        ran: list[int] = []
+        monkeypatch.setattr(
+            LocalAnalytics,
+            "collect_usage_stats",
+            lambda self_, *a, **k: ran.append(1) or {},
+        )
+        entered, gate = threading.Event(), threading.Event()
+        real_start = threading.Thread.start
+
+        def held_start(thread: threading.Thread) -> None:
+            if thread.name == "traigent-usage-stats" and not entered.is_set():
+                entered.set()
+                gate.wait(5)
+            real_start(thread)
+
+        monkeypatch.setattr(threading.Thread, "start", held_start)
+        second: list[dict[str, Any]] = []
+
+        def first_submit() -> None:
+            asyncio.run(analytics.submit_usage_stats())
+
+        with (
+            patch.object(module, "may_send_telemetry", return_value=True),
+            patch.object(module, "usage_analytics_allowed", return_value=True),
+        ):
+            worker = threading.Thread(target=first_submit)
+            worker.start()
+            try:
+                assert entered.wait(5)
+                second.append(asyncio.run(analytics.submit_usage_stats()))
+            finally:
+                gate.set()
+                worker.join(5)
+        assert second[0]["reason"] == "Request timeout"
+        assert len(ran) == 1

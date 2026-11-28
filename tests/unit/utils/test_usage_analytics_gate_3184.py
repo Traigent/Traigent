@@ -72,7 +72,11 @@ def transport(monkeypatch, tmp_path):
     monkeypatch.setattr(
         LocalAnalytics,
         "collect_usage_stats",
-        lambda self: {"total_sessions": 3, "total_trials": 9, "sdk_version": "x"},
+        lambda self, *a, **k: {
+            "total_sessions": 3,
+            "total_trials": 9,
+            "sdk_version": "x",
+        },
     )
     return tmp_path
 

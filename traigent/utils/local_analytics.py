@@ -8,7 +8,11 @@ All data sent is privacy-safe and contains no sensitive information.
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Performance FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
 import asyncio
+import concurrent.futures
 import logging
+import os
+import threading
+import time
 import uuid
 import warnings
 from datetime import UTC, datetime, timedelta
@@ -25,6 +29,7 @@ from traigent.config.backend_config import (
 )
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
+from traigent.utils.relative_change import relative_change
 from traigent.utils.send_policy import (
     _TelemetryAuthSuppressed,
     _usage_analytics_submission,
@@ -42,6 +47,35 @@ except ModuleNotFoundError:
 # to avoid process-wide suppression that could hide real leaks elsewhere.
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock cap for the session scan done on the submit path. The scan runs in
+# a worker thread so the orchestrator's wait_for can fire, and this budget makes
+# the thread itself stop shortly after instead of reading every session file.
+_SUBMIT_SCAN_BUDGET_SECONDS = 3.0
+_FIRST_USE_FILENAME = ".first_use"
+# Local session ids start with %Y%m%d_%H%M%S_%f (LocalStorageManager.create_session).
+_SESSION_ID_TIME_FORMAT = "%Y%m%d_%H%M%S_%f"
+_SESSION_ID_TIME_LENGTH = 22
+# Extra wait for the collector thread beyond its own budget before giving up.
+_SUBMIT_SCAN_MARGIN_SECONDS = 1.0
+# Last collector thread; a stalled read must not be joined by new ones.
+_COLLECTOR_LOCK = threading.Lock()
+_COLLECTOR_THREAD: threading.Thread | None = None
+# Set when the current collector has finished (or failed to start): the slot
+# stays occupied until then, including between assignment and start().
+_COLLECTOR_DONE: threading.Event | None = None
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
+def _reset_collector_after_fork() -> None:
+    global _COLLECTOR_LOCK, _COLLECTOR_THREAD, _COLLECTOR_DONE
+    _COLLECTOR_LOCK = threading.Lock()
+    _COLLECTOR_THREAD = None
+    _COLLECTOR_DONE = None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_collector_after_fork)
 
 # Default analytics endpoint (deprecated - will use backend client instead)
 DEFAULT_ANALYTICS_ENDPOINT = f"{DEFAULT_CLOUD_URL}/v1/local-usage"
@@ -183,8 +217,99 @@ class LocalAnalytics:
 
         return user_id
 
-    def collect_usage_stats(self) -> dict[str, Any]:
+    @staticmethod
+    def _session_id_time(name: str) -> datetime | None:
+        """Creation time encoded in a local session id, or None if not parseable."""
+        try:
+            return datetime.strptime(
+                name[:_SESSION_ID_TIME_LENGTH], _SESSION_ID_TIME_FORMAT
+            ).replace(tzinfo=UTC)
+        except ValueError:
+            return None
+
+    def _scan_sessions(self, time_budget: float) -> dict[str, Any]:
+        """Budgeted scan: every step checks the deadline, so the caller's thread
+        ends within ``time_budget`` plus at most one file read.
+
+        Names are enumerated incrementally (``os.scandir``), then sessions are
+        read newest-first (ids start with their creation time).
+        """
+        deadline = time.monotonic() + time_budget
+        sessions_dir = Path(self.storage.storage_path) / "sessions"
+        names: list[str] = []
+        enumerated_fully = True
+        try:
+            with os.scandir(sessions_dir) as entries:
+                for entry in entries:
+                    if time.monotonic() > deadline:
+                        enumerated_fully = False
+                        break
+                    if entry.name.endswith(".json"):
+                        names.append(entry.name[: -len(".json")])
+        except OSError:
+            enumerated_fully = False
+        # Timestamp ids newest-first, then ids that do not encode a time.
+        timed_pairs: list[tuple[datetime, str]] = []
+        untimed: list[str] = []
+        parsed_fully = True
+        for index, name in enumerate(names):
+            if index % 256 == 0 and time.monotonic() > deadline:
+                parsed_fully = False
+                untimed.extend(names[index:])
+                break
+            stamp = self._session_id_time(name)
+            if stamp is None:
+                untimed.append(name)
+            else:
+                timed_pairs.append((stamp, name))
+        timed_pairs.sort(reverse=True)
+        untimed.sort()
+        all_parsed = not untimed and parsed_fully
+        if not parsed_fully:
+            enumerated_fully = False
+        names = [n for _, n in timed_pairs] + untimed
+        sessions: list[Any] = []
+        read_fully = enumerated_fully
+        for name in names:
+            if time.monotonic() > deadline:
+                read_fully = False
+                break
+            session = self.storage.load_session(name)
+            if session:
+                sessions.append(session)
+        return {
+            "sessions": sessions,
+            "names": names,
+            "enumerated_fully": enumerated_fully,
+            "read_fully": read_fully,
+            "all_parsed": all_parsed,
+            "stamps": {name: stamp for stamp, name in timed_pairs},
+        }
+
+    def _session_improvement(self, session: Any) -> Any:
+        """Improvement of the session already in memory (no second file read);
+        the same computation as ``LocalStorageManager.get_session_summary``."""
+        if not session.trials:
+            return None
+        return relative_change(
+            session.baseline_score,
+            session.best_score,
+            self.storage._session_summary_orientation(session),
+        )
+
+    def collect_usage_stats(self, time_budget: float | None = None) -> dict[str, Any]:
         """Collect privacy-safe aggregated usage statistics.
+
+        Args:
+            time_budget: Optional cap in seconds on the scan. When the cap is
+                hit, ``total_sessions`` is the file count (if the listing
+                itself was cut short: the number of names seen) and
+                ``days_since_first_use`` comes from the session ids. Every
+                other aggregate (completed/failed counts, trials, functions,
+                config-space and improvement averages) is computed from the
+                sessions read in time: ids that encode a timestamp
+                newest-first, then ids that do not. ``sessions_last_30_days``
+                is exact whenever the recent sessions fit in the budget.
 
         Returns:
             Dictionary containing aggregated, non-sensitive stats
@@ -193,7 +318,27 @@ class LocalAnalytics:
             return {}
 
         try:
-            sessions = self.storage.list_sessions()
+            first_use_candidates: list[datetime] | None = None
+            persist_first_use = True
+            truncated_total: int | None = None
+            if time_budget is None:
+                sessions = self.storage.list_sessions()
+            else:
+                scan = self._scan_sessions(time_budget)
+                sessions = scan["sessions"]
+                persist_first_use = scan["enumerated_fully"] and (
+                    scan["read_fully"] or scan["all_parsed"]
+                )
+                if not scan["read_fully"]:
+                    truncated_total = len(scan["names"])
+                stamps: dict[str, datetime] = scan["stamps"]
+                first_use_candidates = list(stamps.values())
+                # Ids that do not encode a time fall back to the sample.
+                first_use_candidates += [
+                    datetime.fromisoformat(x.created_at)
+                    for x in sessions
+                    if x.session_id not in stamps
+                ]
             completed_sessions = [
                 s for s in sessions if s.status == OptimizationStatus.COMPLETED.value
             ]
@@ -224,11 +369,9 @@ class LocalAnalytics:
             # Performance improvement metrics (aggregated)
             improvements: list[float] = []
             for session in completed_sessions:
-                summary = self.storage.get_session_summary(session.session_id)
-                if isinstance(summary, dict):
-                    value = summary.get("improvement")
-                    if isinstance(value, (int, float)):
-                        improvements.append(float(value))
+                value = self._session_improvement(session)
+                if isinstance(value, (int, float)):
+                    improvements.append(float(value))
 
             avg_improvement = (
                 sum(improvements) / len(improvements) if improvements else None
@@ -236,7 +379,9 @@ class LocalAnalytics:
 
             return {
                 # Basic usage metrics
-                "total_sessions": len(sessions),
+                "total_sessions": (
+                    truncated_total if truncated_total is not None else len(sessions)
+                ),
                 "completed_sessions": len(completed_sessions),
                 "failed_sessions": len(failed_sessions),
                 "total_trials": total_trials,
@@ -252,7 +397,9 @@ class LocalAnalytics:
                 ),
                 # Time-based metrics
                 "sessions_last_30_days": len(recent_sessions),
-                "days_since_first_use": self._get_days_since_first_use(),
+                "days_since_first_use": self._get_days_since_first_use(
+                    first_use_candidates, persist=persist_first_use
+                ),
                 # Version and environment (non-sensitive)
                 "sdk_version": get_version(),
                 "execution_mode": self.config.execution_mode,
@@ -270,18 +417,69 @@ class LocalAnalytics:
             logger.debug(f"Error collecting usage stats: {e}")
             return {}
 
-    def _get_days_since_first_use(self) -> int:
-        """Calculate days since first optimization session."""
+    def _first_use_file(self) -> Path:
+        return Path(self.storage.storage_path) / _FIRST_USE_FILENAME
+
+    def _write_first_use(self, first_use: datetime) -> None:
+        """Atomic write: unique temp file (O_EXCL, O_NOFOLLOW) then os.replace;
+        never through a symlink; a concurrent writer is tolerated."""
+        target = self._first_use_file()
+        if target.is_symlink():
+            logger.debug("Refusing to write first-use time through a symlink")
+            return
+        tmp = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
         try:
-            sessions = self.storage.list_sessions()
-            if not sessions:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                handle.write(first_use.isoformat())
+            os.replace(tmp, target)
+        except Exception as e:
+            logger.debug(f"Could not save first-use time: {e}")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+    def _read_first_use(self) -> str:
+        if not _O_NOFOLLOW and os.path.islink(self._first_use_file()):
+            raise OSError("first-use file is a symlink")
+        fd = os.open(self._first_use_file(), os.O_RDONLY | _O_NOFOLLOW)
+        with os.fdopen(fd) as handle:
+            return handle.read().strip()
+
+    def _get_days_since_first_use(
+        self,
+        first_use_candidates: list[datetime] | None = None,
+        persist: bool = True,
+    ) -> int:
+        """Calculate days since first optimization session.
+
+        Reads a stored first-use timestamp (next to ``.analytics_id``). Only when
+        it is missing is it derived once, from ``first_use_candidates`` if given
+        or else a full scan, and then stored so later calls never scan.
+        """
+        try:
+            try:
+                first_use = datetime.fromisoformat(self._read_first_use())
+                if first_use.tzinfo is None:
+                    first_use = first_use.replace(tzinfo=UTC)
+                return max((datetime.now(UTC) - first_use).days, 0)
+            except (OSError, ValueError):
+                pass
+
+            if first_use_candidates is None:
+                first_use_candidates = [
+                    datetime.fromisoformat(s.created_at)
+                    for s in self.storage.list_sessions()
+                ]
+            if not first_use_candidates:
                 return 0
 
-            earliest_session = min(
-                sessions, key=lambda s: datetime.fromisoformat(s.created_at)
-            )
-
-            first_use = datetime.fromisoformat(earliest_session.created_at)
+            first_use = min(first_use_candidates)
+            if first_use.tzinfo is None:
+                first_use = first_use.replace(tzinfo=UTC)
+            if persist:
+                self._write_first_use(first_use)
             return (datetime.now(UTC) - first_use).days
 
         except Exception as e:
@@ -298,6 +496,77 @@ class LocalAnalytics:
             return {"success": False, "reason": "Submission not due yet"}
         return None
 
+    def _credentials_refusal(self) -> tuple[dict[str, Any] | None, str | None]:
+        """The checks develop runs after collecting stats and before building
+        the client: API-key read, ``_analytics_api_key_error``, then
+        ``may_send_telemetry`` (origin/develop local_analytics.py 327-332).
+
+        Returns ``(refusal_result, api_key)``.
+        """
+        try:
+            from traigent.config.backend_config import BackendConfig
+
+            api_key = BackendConfig.get_api_key()
+        except ImportError:
+            logger.debug("Backend client not available for analytics submission")
+            return {"success": False, "reason": "Backend client not available"}, None
+        api_key_error = _analytics_api_key_error(api_key)
+        if api_key_error:
+            return {"success": False, "reason": api_key_error}, None
+        if not may_send_telemetry():
+            return {"success": False, "reason": "Analytics disabled"}, None
+        return None, api_key
+
+    async def _collect_stats_off_loop(self, budget: float) -> dict[str, Any] | None:
+        """Run collection on a dedicated daemon thread (not the default executor,
+        which ``asyncio.run`` joins at shutdown). Returns None if it overran
+        ``budget`` plus a margin; the abandoned daemon thread cannot block exit.
+        """
+        global _COLLECTOR_THREAD, _COLLECTOR_DONE
+        result: concurrent.futures.Future[dict[str, Any]] = concurrent.futures.Future()
+
+        done = threading.Event()
+
+        def work() -> None:
+            try:
+                try:
+                    outcome = self.collect_usage_stats(budget)
+                except BaseException as exc:  # hand any failure back to the caller
+                    try:
+                        result.set_exception(exc)
+                    except concurrent.futures.InvalidStateError:
+                        pass
+                    return
+                try:
+                    result.set_result(outcome)
+                except concurrent.futures.InvalidStateError:
+                    pass  # the caller already gave up
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=work, name="traigent-usage-stats", daemon=True)
+        with _COLLECTOR_LOCK:
+            occupied = _COLLECTOR_DONE is not None and not _COLLECTOR_DONE.is_set()
+            if not occupied:
+                _COLLECTOR_THREAD = thread
+                _COLLECTOR_DONE = done
+        if occupied:
+            logger.debug("Previous usage stats collection still running; skipping")
+            return None
+        try:
+            thread.start()
+        except BaseException:
+            done.set()
+            raise
+        try:
+            return await asyncio.wait_for(
+                asyncio.wrap_future(result),
+                timeout=budget + _SUBMIT_SCAN_MARGIN_SECONDS,
+            )
+        except TimeoutError:
+            logger.debug("Usage stats collection timed out; skipping this submission")
+            return None
+
     async def submit_usage_stats(self, force: bool = False) -> dict[str, Any]:
         """Submit usage statistics using existing backend session infrastructure.
 
@@ -309,28 +578,31 @@ class LocalAnalytics:
         Returns:
             Result dictionary with success status and details
         """
+        # Develop's pre-collect check (origin/develop 312), unchanged.
         skipped = self._submission_skip_result(force)
         if skipped is not None:
             return skipped
 
-        stats = self.collect_usage_stats()
+        # Only to avoid a scan whose send would be refused anyway; the
+        # after-collect run below is the authoritative one.
+        refusal, _ = self._credentials_refusal()
+        if refusal is not None:
+            return refusal
+
+        stats = await self._collect_stats_off_loop(_SUBMIT_SCAN_BUDGET_SECONDS)
+        if stats is None:
+            return {"success": False, "reason": "Request timeout"}
         if not stats:
             return {"success": False, "reason": "No stats to submit"}
 
         try:
             # Import backend client lazily to avoid circular imports
             from traigent.cloud import backend_client as backend_client_module
-
-            # Get API key from environment
             from traigent.config.backend_config import BackendConfig
 
-            api_key = BackendConfig.get_api_key()
-            api_key_error = _analytics_api_key_error(api_key)
-            if api_key_error:
-                return {"success": False, "reason": api_key_error}
-
-            if not may_send_telemetry():
-                return {"success": False, "reason": "Analytics disabled"}
+            refusal, api_key = self._credentials_refusal()
+            if refusal is not None:
+                return refusal
             backend_client = backend_client_module.get_backend_client(
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),
