@@ -21,16 +21,24 @@ from tests.integration.test_quickstart_smoke import _SITECUSTOMIZE_SRC
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
+# The blocker prints this marker to stderr when sitecustomize runs, so the
+# parent can prove the network blocker was loaded in the child interpreter.
+_BLOCKER_MARKER = "CI_APPROVAL_NETWORK_BLOCKER_LOADED"
+_BLOCKER_SRC = (
+    _SITECUSTOMIZE_SRC
+    + f'\nimport sys as _sys\n_sys.stderr.write("{_BLOCKER_MARKER}\\n")\n'
+)
+
 
 def _run_quickstart(extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="traigent-ci-approval-") as home:
         site = Path(home) / "site"
         site.mkdir()
-        (site / "sitecustomize.py").write_text(_SITECUSTOMIZE_SRC, encoding="utf-8")
+        (site / "sitecustomize.py").write_text(_BLOCKER_SRC, encoding="utf-8")
         env = {
             "PATH": os.environ.get("PATH", ""),
             "HOME": home,
-            "PYTHONPATH": f"{site}:{_REPO_ROOT}",
+            "PYTHONPATH": os.pathsep.join([str(site), str(_REPO_ROOT)]),
             "TRAIGENT_SKIP_DOTENV": "1",
             "PYTHONUNBUFFERED": "1",
             "TRAIGENT_MOCK_LLM": "true",
@@ -53,8 +61,16 @@ def _tail(proc: subprocess.CompletedProcess[str]) -> str:
     return f"stderr: {proc.stderr[-2000:]}\nstdout: {proc.stdout[-2000:]}"
 
 
+def _assert_blocker_loaded(proc: subprocess.CompletedProcess[str]) -> None:
+    assert _BLOCKER_MARKER in proc.stderr, (
+        "network blocker sitecustomize did not load in the child interpreter\n"
+        + _tail(proc)
+    )
+
+
 def test_keyless_quickstart_in_ci_without_approval_is_refused() -> None:
     proc = _run_quickstart({})
+    _assert_blocker_loaded(proc)
     assert proc.returncode != 0, _tail(proc)
     assert "CI/CD Approval Required" in proc.stdout + proc.stderr, _tail(proc)
 
@@ -63,5 +79,6 @@ def test_keyless_quickstart_in_ci_with_approval_passes() -> None:
     proc = _run_quickstart(
         {"TRAIGENT_RUN_APPROVED": "1", "TRAIGENT_APPROVED_BY": "unit-test"}
     )
+    _assert_blocker_loaded(proc)
     assert "CI/CD Approval Required" not in proc.stdout + proc.stderr, _tail(proc)
     assert proc.returncode == 0, _tail(proc)
