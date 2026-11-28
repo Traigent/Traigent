@@ -41,15 +41,15 @@ export TRAIGENT_OFFLINE_MODE=true
 ```
 
 **Residual risk — import order.** If the application imports `litellm` *before*
-`traigent`, litellm fetches its price table at its own import, before the SDK
-can set any default [R: workload `import_litellm_first`]. Only the environment
-variable set before the process starts, or set in code before the first
-`litellm` import, prevents that; the SDK's own default pin cannot, because it
+`traigent`, litellm by default fetches its price table at its own import,
+before the SDK can set any default [R: workload `import_litellm_first`]. Setting
+`LITELLM_LOCAL_MODEL_COST_MAP=True` before the process starts, or in code before
+the first `litellm` import, is one way to prevent that; the SDK's own default pin cannot, because it
 only runs when `traigent/__init__.py` first executes, which is already too
 late. The egress test keeps this as a strict xfail
 (`test_litellm_imported_first_reaches_no_third_party_host`).
 
-With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. Observed intermittently with litellm 1.111.0 on a host without network access: the pricing-map fetch fails and the process can abort at exit. To reproduce, start a fresh Python process for each of 10 iterations of `import litellm` in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check each exit status (one such run: 10 of 10 exited 134). In the same setup, importing `traigent` first with default settings, and setting `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import, each gave 0 aborts in 10 runs. litellm accepts only `true` (any case) for these two variables, so `1` or `yes` do not count, and importing `traigent` first does not replace such a value.
+With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. It can exit with status 134 (observed intermittently; in one run of 10 fresh processes, 10 of 10 did). To reproduce, with the two LiteLLM variables unset, start a fresh Python process for each of 10 iterations of `import litellm` in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check each exit status. In the same setup, importing `traigent` first with default settings, and setting `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import, each gave 0 aborts in 10 runs. litellm accepts only `true` (any case) for these two variables, so `1` or `yes` do not count, and importing `traigent` first does not replace such a value.
 
 **What happens when the network is blocked.** In the recorder runs described here (litellm 1.98.0, `docker run --network none`), every workload completed [R]. A refused DNS lookup costs litellm
 well under a second (default vs pinned `optimize_mock`: 11.9 s vs 11.3/11.7 s),
