@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.3] - 2026-11-28
+
+### Changed
+
+- Package metadata only: PyPI keywords, project Homepage URL and a README Integrations section. No code changes.
+
 ## [0.34.2] - 2026-11-24
 
 ### Breaking
