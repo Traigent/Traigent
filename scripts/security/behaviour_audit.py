@@ -956,6 +956,30 @@ def external_hosts(report: dict[str, Any]) -> set[str]:
     return set(report["summary"]["external_hosts"])
 
 
+def _load_record_destination(rep: dict[str, Any]) -> str:
+    """`` to host `h` `` when litellm's record carries a URL host, else ''."""
+    url = (rep.get("litellm_load_record") or {}).get("url")
+    try:
+        host = urlsplit(str(url)).hostname if url else None
+    except ValueError:
+        host = None
+    return f" to host `{host}`" if host else ""
+
+
+def _egress_phrase(rep: dict[str, Any]) -> str:
+    if not rep["block_egress"]:
+        return "allowed"
+    summary = rep.get("summary") or {}
+    if summary.get("native_fetch_witnesses") or summary.get(
+        "native_fetch_not_redirected"
+    ):
+        return (
+            "blocked for Python-level connections only; "
+            "see the native-fetch lines below"
+        )
+    return "blocked after recording"
+
+
 def to_markdown(reports: list[dict[str, Any]]) -> str:
     lines = []
     for rep in reports:
@@ -967,9 +991,23 @@ def to_markdown(reports: list[dict[str, Any]]) -> str:
         lines.append(
             f"- exit: `{rep['exit']}` rc={rep['returncode']} "
             f"wall-clock {rep['wall_clock_s']} s; egress "
-            f"{'blocked after recording' if rep['block_egress'] else 'allowed'}; "
+            f"{_egress_phrase(rep)}; "
             f"litellm {rep.get('litellm_version')}"
         )
+        summary = rep.get("summary") or {}
+        witnesses = summary.get("native_fetch_witnesses") or []
+        if "listener" in witnesses:
+            lines.append("- the loopback listener received a pricing request")
+        if "litellm-load-record" in witnesses:
+            lines.append(
+                "- litellm reported a pricing fetch attempt"
+                + _load_record_destination(rep)
+            )
+        if summary.get("native_fetch_not_redirected"):
+            lines.append(
+                "- litellm reported a pricing fetch attempt at a different URL "
+                "from the configured loopback listener"
+            )
         if rep.get("error"):
             lines.append(f"- workload error: `{rep['error']}`")
         lines.append(
