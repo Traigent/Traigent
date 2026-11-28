@@ -43,14 +43,15 @@ export TRAIGENT_OFFLINE_MODE=true
 **Residual risk — import order.** If the application imports `litellm` *before*
 `traigent`, litellm fetches its price table at its own import, before the SDK
 can set any default [R: workload `import_litellm_first`]. Only the environment
-variable set before the process starts prevents that; the SDK's own default
-pin cannot, because it only runs when `traigent/__init__.py` first executes,
-which is already too late. The egress test keeps this as a strict xfail
+variable set before the process starts, or set in code before the first
+`litellm` import, prevents that; the SDK's own default pin cannot, because it
+only runs when `traigent/__init__.py` first executes, which is already too
+late. The egress test keeps this as a strict xfail
 (`test_litellm_imported_first_reaches_no_third_party_host`).
 
-With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. In our tests on a host without network (Docker `--network none`), litellm 1.111.0 exited non-zero in some runs after its pricing-map fetch failed; no such exits were observed with 1.110.4 or 1.108.6. With the default pricing settings (`TRAIGENT_LITELLM_LIVE_PRICES` unset and `LITELLM_LOCAL_MODEL_COST_MAP` not set to `false`), import `traigent` first; or set `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import.
+With litellm 1.111.0, that import-order case can also end the process with a non-zero exit status. Observed intermittently with litellm 1.111.0 on a host without network access: the pricing-map fetch fails and the process can abort at exit. To reproduce, run `import litellm` in a loop in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check the exit status. Importing `traigent` first avoids the fetch only when `LITELLM_LOCAL_MODEL_COST_MAP` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are unset or already `True`, and `TRAIGENT_LITELLM_LIVE_PRICES` is unset; litellm honours only the value `true` (any case), so `1` or `yes` do not count. Otherwise set both variables to `True` before the first `litellm` import.
 
-**What happens when the network is blocked.** In the recorder runs described here (`docker run --network none`), every workload completed [R, evidence §5]. A refused DNS lookup costs litellm
+**What happens when the network is blocked.** In the recorder runs described here (`docker run --network none`), every workload completed [R]. A refused DNS lookup costs litellm
 well under a second (default vs pinned `optimize_mock`: 11.9 s vs 11.3/11.7 s),
 so the 5 s litellm timeout was not observed; it would apply only where a
 firewall silently *drops* packets — unmeasured. The Hugging Face path is

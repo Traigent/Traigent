@@ -16,7 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Known issues
 
-- With litellm 1.111.0, importing `litellm` before `traigent` on a host without network can make the process exit non-zero. In our tests on a host without network (Docker `--network none`), litellm 1.111.0 exited non-zero in some runs after its pricing-map fetch failed; no such exits were observed with 1.110.4 or 1.108.6. With the default pricing settings (`TRAIGENT_LITELLM_LIVE_PRICES` unset and `LITELLM_LOCAL_MODEL_COST_MAP` not set to `false`), import `traigent` first; or set `LITELLM_LOCAL_MODEL_COST_MAP=True` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True` before the first `litellm` import.
+- With litellm 1.111.0, importing `litellm` before `traigent` on a host without network access can make the process exit non-zero. Observed intermittently with litellm 1.111.0 on a host without network access: the pricing-map fetch fails and the process can abort at exit. To reproduce, run `import litellm` in a loop in a `python:3.12` container started with `--network none`, with litellm 1.111.0 installed from a local wheel directory (`pip install --no-index --find-links /wh litellm==1.111.0`), and check the exit status. Importing `traigent` first avoids the fetch only when `LITELLM_LOCAL_MODEL_COST_MAP` and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are unset or already `True`, and `TRAIGENT_LITELLM_LIVE_PRICES` is unset; litellm honours only the value `true` (any case), so `1` or `yes` do not count. Otherwise set both variables to `True` before the first `litellm` import.
 
 ## [0.34.2] - 2026-11-24
 
